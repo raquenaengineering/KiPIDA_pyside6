@@ -1,13 +1,6 @@
 import unittest
-import sys
-import os
 
-# Add parent directory to sys.path to import models
-plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if plugin_dir not in sys.path:
-    sys.path.insert(0, plugin_dir)
-
-from models import generate_regulator_name
+from kipida.core.models import generate_regulator_name
 
 class TestRegulatorNaming(unittest.TestCase):
     def test_same_component(self):

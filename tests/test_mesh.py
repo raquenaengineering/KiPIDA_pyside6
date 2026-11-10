@@ -9,10 +9,6 @@ try:
 except ImportError:
     pass
 
-plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if plugin_dir not in sys.path:
-    sys.path.insert(0, plugin_dir)
-
 # 1. Pcbnew Mock (Base for others)
 class MockPcbnew:
     PAD_ATTRIB_PTH = 0
@@ -86,7 +82,7 @@ class MockFootprint:
 class MockPoint:
     def __init__(self, x, y): self.x, self.y = x, y
 
-from mesh import Mesher, Mesh
+from kipida.simulation.mesh import Mesher, Mesh
 
 class TestMesher(unittest.TestCase):
     def setUp(self):

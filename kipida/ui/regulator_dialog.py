@@ -1,8 +1,5 @@
 import wx
-try:
-    from models import generate_regulator_name
-except ImportError:
-    from ..models import generate_regulator_name
+from kipida.core.models import generate_regulator_name
 
 class RegulatorDialog(wx.Dialog):
     def __init__(self, parent, title, available_rails, discoverer, input_rail=None, output_rail=None):

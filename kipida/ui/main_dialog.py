@@ -3,17 +3,11 @@ import wx.dataview
 import sys
 import os
 
-# Ensure plugin dir is in path to import modules
-plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if plugin_dir not in sys.path:
-    sys.path.insert(0, plugin_dir)
-
-from extractor import GeometryExtractor
-from mesh import Mesher
-from solver import Solver
-from solver import Solver
-from ui.power_tree_panel import PowerTreePanel
-from plotter import Plotter
+from kipida.kicad.extractor import GeometryExtractor
+from kipida.simulation.mesh import Mesher
+from kipida.simulation.solver import Solver
+from kipida.ui.power_tree_panel import PowerTreePanel
+from kipida.visualization.plotter import Plotter
 
 class KiPIDA_MainDialog(wx.Dialog):
     def __init__(self, parent, board_adapter, project=None):

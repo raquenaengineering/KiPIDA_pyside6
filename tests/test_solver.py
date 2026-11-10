@@ -14,12 +14,7 @@ class MockMesh:
 
 class TestSolver(unittest.TestCase):
     def setUp(self):
-        # Ensure we can import solver
-        plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if plugin_dir not in sys.path:
-            sys.path.insert(0, plugin_dir)
-            
-        from solver import Solver
+        from kipida.simulation.solver import Solver
         self.solver_class = Solver
 
     def test_series_resistors(self):

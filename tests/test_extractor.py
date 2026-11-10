@@ -10,11 +10,6 @@ try:
 except ImportError:
     pass
 
-# Include plugin dir
-plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if plugin_dir not in sys.path:
-    sys.path.insert(0, plugin_dir)
-
 # 1. Pcbnew Mock
 class MockPcbnew:
     PAD_SHAPE_CIRCLE = 1
@@ -87,7 +82,7 @@ class MockTrack(MockPcbnew.PCB_TRACK):
 class MockPoint:
     def __init__(self, x, y): self.x, self.y = x, y
 
-from extractor import GeometryExtractor
+from kipida.kicad.extractor import GeometryExtractor
 
 class TestGeometryExtractor(unittest.TestCase):
     def setUp(self):

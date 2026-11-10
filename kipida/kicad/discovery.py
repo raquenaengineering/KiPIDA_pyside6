@@ -1,9 +1,6 @@
 import re
 
-try:
-    from .models import PowerRail, UnifiedSource, UnifiedLoad, ComponentRef
-except (ImportError, ValueError):
-    from models import PowerRail, UnifiedSource, UnifiedLoad, ComponentRef
+from kipida.core.models import PowerRail, UnifiedSource, UnifiedLoad, ComponentRef
 
 class NetDiscoverer:
     """

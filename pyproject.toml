@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kipida"
+version = "0.5.1"
+description = "Ki-PIDA: KiCad Power Integrity & Delivery Analyzer (DC IR-drop plugin)"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+# Target: KiCad 10. On Windows/macOS KiCad runs IPC plugins with its bundled
+# interpreter (Python 3.11.5 in KiCad 10.0.x), so code must stay 3.11-compatible
+# even though the dev venv may be newer.
+requires-python = ">=3.11"
+# Runtime deps are duplicated in requirements.txt, which KiCad reads when it
+# builds the plugin's own environment. Keep both lists in sync.
+dependencies = [
+    "numpy",
+    "scipy",
+    "shapely",
+    "matplotlib",
+    "kicad-python>=0.7.0",  # 0.7.0 is the first release targeting KiCad 10
+    "pypardiso",
+]
+
+[project.optional-dependencies]
+ui = ["wxPython"]
+dev = ["pytest", "wxPython"]
+
+[tool.setuptools.packages.find]
+include = ["kipida*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

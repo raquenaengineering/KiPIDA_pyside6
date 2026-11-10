@@ -13,7 +13,7 @@ Ki-PIDA democratizes high-end PI analysis by:
 
 ## ✨ Key Features
 
-- **Native Integration:** Built for KiCad 9.0+ using the Python Scripting API.
+- **Native Integration:** Built for KiCad 10 using the IPC API (`kicad-python`).
 - **Power Tree Management:** Auto-discover power rails and manage complex hierarchies including VRM efficiency modeling.
 - **Hybrid 2.5D Solver:** Fast and accurate simulation using an optimized resistive mesh approach.
 - **Multi-Physics Support:** Coupled electro-thermal simulation to account for temperature-dependent copper resistivity.
@@ -23,26 +23,25 @@ Ki-PIDA democratizes high-end PI analysis by:
 
 ## 📦 Installation
 
-Ki-PIDA is designed to run within the KiCad 9.0+ environment. Follow these steps to install and enable the plugin:
+Ki-PIDA targets **KiCad 10**. Follow these steps to install and enable the plugin:
 
 ### 1. Enable the KiCad API
-Ki-PIDA communicates with KiCad via the new IPC-based API.
+Ki-PIDA communicates with KiCad via the IPC-based API.
 1. Open KiCad.
-2. Go to **Preferences** > **Common**.
-3. Under the **API** section, check the box for **Enable API**.
+2. Go to **Preferences** > **Plugins**.
+3. Enable the API server.
 4. Restart KiCad if prompted.
-![alt text](image-3.png)
+![alt text](docs/images/image-3.png)
 
 ### 2. Install the Plugin
-1. Locate your KiCad plugins directory:
-   - **Windows:** `%APPDATA%\kicad\9.0\plugins`
-   - **Linux:** `~/.local/share/kicad/9.0/plugins`
-   - **macOS:** `~/Library/Application Support/kicad/9.0/plugins`
+1. Locate your KiCad plugins directory (`${KICAD_DOCUMENTS_HOME}/10.0/plugins`):
+   - **Windows:** `Documents\KiCad\10.0\plugins`
+   - **Linux:** `~/.local/share/kicad/10.0/plugins`
 2. Download or clone this repository.
-3. Copy the `KiPIDA` folder into the `plugins` directory.
+3. Copy the repository folder into the `plugins` directory (it must contain `plugin.json` at its top level).
 
 > [!NOTE]
-> Ki-PIDA includes a self-contained dependency manager that will automatically install required libraries (NumPy, SciPy, Shapely, Matplotlib) upon first launch if they are missing from your KiCad Python environment.
+> On first load, KiCad creates a dedicated Python virtual environment for the plugin and installs the packages listed in `requirements.txt`. The toolbar button appears only once that environment is ready. If it never appears, right-click the plugin's action in the PCB Editor preferences and choose **Recreate Plugin Environment**. The environment lives in `%LOCALAPPDATA%\KiCad\10.0\python-environments\` on Windows.
 
 ---
 
@@ -61,7 +60,7 @@ Open your PCB layout in KiCad Pcbnew and click the **Ki-PIDA** icon in the top t
     - **Switching Regulators (Buck/Boost):** Conserve power based on efficiency (e.g., 90%).
     - **Multi-Output Support:** Handle PMICs where one component drives multiple output rails.
 
-![alt text](image-4.png)
+![alt text](docs/images/image-4.png)
 
 ### 3. Add Sources (VRMs / Power Inputs)
 Identify where power enters this net:
@@ -78,7 +77,7 @@ Identify the components consuming power:
 4. Check the **Pads** through which the current is drawn.
 5. Click **OK**.
 
-![alt text](image-5.png)
+![alt text](docs/images/image-5.png)
 
 ### 5. Run the Simulation
 Before running, you can adjust the **Mesh Resolution (mm)**. A value of `0.1mm` is usually sufficient for accurate results.
@@ -101,17 +100,42 @@ Once "Simulation Success" appears, the UI will jump to the **Results** tab.
 
 Ki-PIDA is built on a modular architecture designed for performance and maintainability.
 
+### Project Layout
+```
+plugin.json            KiCad IPC plugin manifest (must stay at root)
+ipc_entry.py           Entry point launched by KiCad (thin launcher)
+requirements.txt       Runtime deps KiCad installs into the plugin env
+pyproject.toml         Dev metadata, optional deps, pytest config
+resources/             Plugin icon referenced by plugin.json
+kipida/
+  app.py               KiCad IPC connection + app bootstrap
+  core/                Domain models and config persistence (pure Python)
+  kicad/               Board access via kipy: net discovery, geometry extraction
+  simulation/          Resistive mesh generation and sparse DC solver
+  visualization/       Matplotlib plotting
+  ui/                  wxPython dialogs and panels
+tests/                 pytest suite
+docs/images/           README screenshots
+```
+
+### Development Setup
+```
+py -3.14 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt -e .[dev]
+.venv\Scripts\python -m pytest
+```
+
 ### Architecture
-- **Extractor (`extractor.py`):** Interfaces with the KiCad API to pull filled zone geometry, track layouts, and physical stackup data.
-- **Mesher (`mesh.py`):** Discretizes continuous copper geometry into a 2D/3D resistive grid (Rasterization).
-- **Solver (`solver.py`):** Uses an Admittance Matrix (Stamps method) and optimized SciPy sparse solvers (SuperLU/CG) to solve the electrical system.
-- **Visualizer (`visualizer.py`):** Generates heatmaps via Matplotlib and renders them as overlays in KiCad.
+- **Extractor (`kipida/kicad/extractor.py`):** Interfaces with the KiCad API to pull filled zone geometry, track layouts, and physical stackup data.
+- **Mesher (`kipida/simulation/mesh.py`):** Discretizes continuous copper geometry into a 2D/3D resistive grid (Rasterization).
+- **Solver (`kipida/simulation/solver.py`):** Uses an Admittance Matrix (Stamps method) and optimized SciPy sparse solvers (SuperLU/CG) to solve the electrical system.
+- **Plotter (`kipida/visualization/plotter.py`):** Generates voltage heatmaps and 3D views via Matplotlib for the Results tab.
 
 ### Methodology
 The tool utilizes a **Hybrid 2.5D Finite Difference Method (FDM)**. It represents PCB layers as 2D grids of resistors connected vertically by via/PTH resistor elements. This provides the ideal balance between the speed of a 2D solver and the accuracy of a full 3D FEM for planar PCB structures.
 
 ### Stack
-- **Languages:** Python 3.9+
+- **Languages:** Python 3.11+ (KiCad 10 runs plugins on its bundled Python 3.11)
 - **UI:** wxPython
 - **Math:** NumPy & SciPy
 - **Geometry:** Shapely

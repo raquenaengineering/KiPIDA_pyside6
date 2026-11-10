@@ -1,26 +1,27 @@
 
 import unittest
 import sys
-import os
-
-# Add plugin root to path
-plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if plugin_dir not in sys.path:
-    sys.path.insert(0, plugin_dir)
-
-# Mock wx if strictly necessary, but let's try assuming it might be present or we can mock it
-# For CI/headless correctness without wx installed, we often mock wx.
-# Let's simple-mock wx to ensure logic runs even if system python doesn't have wx (though user python likely does)
 import types
-if 'wx' not in sys.modules:
-    wx_mock = types.ModuleType('wx')
-    wx_mock.Bitmap = lambda *args: "BITMAP_OBJECT"
-    wx_mock.Image = lambda *args: "IMAGE_OBJECT"
-    wx_mock.BITMAP_TYPE_PNG = 1
-    sys.modules['wx'] = wx_mock
 
-from plotter import Plotter
-from mesh import Mesh
+from kipida.simulation.mesh import Mesh
+
+# Plotter converts figures to wx bitmaps, and a real wx.Bitmap needs a running
+# wx.App. Replace the plotter module's `wx` reference with a stub instead of
+# overwriting sys.modules['wx'], so other tests still get the real wxPython.
+_wx_stub = types.ModuleType('wx')
+_wx_stub.Bitmap = lambda *args: "BITMAP_OBJECT"
+_wx_stub.Image = lambda *args: "IMAGE_OBJECT"
+_wx_stub.BITMAP_TYPE_PNG = 1
+
+try:
+    import wx  # noqa: F401
+except ImportError:
+    sys.modules['wx'] = _wx_stub  # wxPython not installed: let plotter import
+
+from kipida.visualization import plotter as plotter_module
+
+plotter_module.wx = _wx_stub
+Plotter = plotter_module.Plotter
 
 class TestPlotter(unittest.TestCase):
     def setUp(self):

@@ -2,10 +2,7 @@ import json
 from typing import List
 from pathlib import Path
 
-try:
-    from .models import PowerRail, UnifiedSource, UnifiedLoad, VoltageRegulator, ComponentRef
-except (ImportError, ValueError):
-    from models import PowerRail, UnifiedSource, UnifiedLoad, VoltageRegulator, ComponentRef
+from kipida.core.models import PowerRail, UnifiedSource, UnifiedLoad, VoltageRegulator, ComponentRef
 
 CONFIG_VERSION = "1.0"
 

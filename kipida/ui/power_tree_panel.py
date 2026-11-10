@@ -1,19 +1,11 @@
 import wx
 import wx.dataview
 
-try:
-    from models import PowerRail, UnifiedSource, UnifiedLoad, ComponentRef, VoltageRegulator
-    from ui.component_selector import ComponentSelectorDialog
-    from ui.regulator_dialog import RegulatorDialog
-    from discovery import NetDiscoverer
-    from config_manager import save_config, load_config
-except (ImportError, ValueError):
-    # Fallback or just re-raise if absolute fails (shouldn't happen with sys.path set)
-    from models import PowerRail, UnifiedSource, UnifiedLoad, ComponentRef, VoltageRegulator
-    from ui.component_selector import ComponentSelectorDialog
-    from ui.regulator_dialog import RegulatorDialog
-    from discovery import NetDiscoverer
-    from config_manager import save_config, load_config
+from kipida.core.models import PowerRail, UnifiedSource, UnifiedLoad, ComponentRef, VoltageRegulator
+from kipida.core.config_manager import save_config, load_config
+from kipida.kicad.discovery import NetDiscoverer
+from kipida.ui.component_selector import ComponentSelectorDialog
+from kipida.ui.regulator_dialog import RegulatorDialog
 
 class NetSelectionDialog(wx.Dialog):
     def __init__(self, parent, nets):

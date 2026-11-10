@@ -4,13 +4,8 @@ import tempfile
 import os
 from pathlib import Path
 
-import sys
-plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if plugin_dir not in sys.path:
-    sys.path.insert(0, plugin_dir)
-
-from config_manager import save_config, load_config
-from models import PowerRail, UnifiedSource, UnifiedLoad, VoltageRegulator, ComponentRef
+from kipida.core.config_manager import save_config, load_config
+from kipida.core.models import PowerRail, UnifiedSource, UnifiedLoad, VoltageRegulator, ComponentRef
 
 class TestConfigManager(unittest.TestCase):
     

@@ -2,5 +2,5 @@ numpy
 scipy
 shapely
 matplotlib
-kicad-python
+kicad-python>=0.7.0
 pypardiso

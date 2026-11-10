@@ -4,10 +4,11 @@
     "name": "Ki-PIDA",
     "description": "Power Integrity & Delivery Analyzer for KiCad",
     "version": "0.5.1",
-    "kicad_version": "9.99",
+    "kicad_version": "10.0",
     "status": "stable",
     "runtime": {
-        "type": "python"
+        "type": "python",
+        "min_version": "3.11"
     },
     "actions": [
         {
