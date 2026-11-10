@@ -149,6 +149,15 @@ class TestResultsView(unittest.TestCase):
         view = RailResultsWidget(self._rail_result(), {}, drop_pct=5.0, board_outline=[])
         self.assertIsNone(view.layer_plots[0].outline_item)
 
+    def test_ground_rail_uses_its_actual_range(self):
+        from kipida.ui.results_view import drop_levels
+        # GND: max 0 V, min -1.1 mV. "5 % of 0 V" is no range at all; use the data range.
+        self.assertEqual(drop_levels(0.0, 5.0, v_min=-0.0011), (-0.0011, 0.0))
+        # Normal rails keep the Max Drop % behaviour
+        lo, hi = drop_levels(24.0, 0.1, v_min=23.99)
+        self.assertAlmostEqual(lo, 23.976, places=9)
+        self.assertEqual(hi, 24.0)
+
     def test_zero_drop_rail_does_not_break_levels(self):
         from kipida.ui.results_view import drop_levels
         lo, hi = drop_levels(3.3, 0.0)

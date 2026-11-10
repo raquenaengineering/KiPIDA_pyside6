@@ -48,9 +48,16 @@ def _bounds(grids, outline):
     return b[:, 0].min(), b[:, 1].min(), b[:, 2].max(), b[:, 3].max()
 
 
-def drop_levels(v_max: float, drop_pct: float):
-    """Colour scale: from (1 - drop%) of the rail's max voltage up to the max."""
-    lo, hi = v_max * (1.0 - drop_pct / 100.0), v_max
+def drop_levels(v_max: float, drop_pct: float, v_min: float = None):
+    """Colour scale: from (1 - drop%) of the rail's max voltage up to the max.
+
+    A percentage of ~0 V means nothing, so for ground-like rails (max ~ 0 V)
+    the scale spans the rail's actual voltage range instead (needs v_min).
+    """
+    if abs(v_max) < 1e-6 and v_min is not None:
+        lo, hi = v_min, v_max
+    else:
+        lo, hi = v_max * (1.0 - drop_pct / 100.0), v_max
     if hi - lo < 1e-9:  # zero drop range would break the colour bar
         lo = hi - 1e-6
     return lo, hi
@@ -344,7 +351,7 @@ class RailResultsWidget(QTabWidget):
         layer_order = list((stackup or {}).get("layer_order", []))
 
         grids = mesh_to_layer_grids(rail_result.mesh, rail_result.results)
-        levels = drop_levels(rail_result.v_max, drop_pct)
+        levels = drop_levels(rail_result.v_max, drop_pct, rail_result.v_min)
 
         layer_names = {lid: copper.get(lid, {}).get("name", str(lid)) for lid in grids}
         self.view_3d = Rail3DView(grids, layer_order, levels, outline=board_outline, layer_names=layer_names)
@@ -359,7 +366,7 @@ class RailResultsWidget(QTabWidget):
             self.addTab(plot, name)
 
     def set_drop_pct(self, drop_pct):
-        lo, hi = drop_levels(self.rail_result.v_max, drop_pct)
+        lo, hi = drop_levels(self.rail_result.v_max, drop_pct, self.rail_result.v_min)
         self.view_3d.set_levels(lo, hi)
         for plot in self.layer_plots:
             plot.set_levels(lo, hi)
