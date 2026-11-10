@@ -3,6 +3,7 @@ import time
 import traceback
 
 from PySide6.QtCore import QElapsedTimer, QThread, QTimer, Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDoubleSpinBox, QHBoxLayout, QLabel, QMainWindow,
     QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTabWidget,
@@ -146,7 +147,14 @@ class MainWindow(QMainWindow):
         self.result_splitter.addWidget(self.result_text)
         self.result_splitter.addWidget(self.results_tabs)
         self.result_splitter.setSizes([100, 500])
-        self.tabs.addTab(self.result_splitter, "Results")
+        results_page = QWidget()
+        rv = QVBoxLayout(results_page)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.addWidget(self.result_splitter, 1)
+        hint = QLabel("Keys:  1-9 rail   |   ← / → view   |   C fit to canvas   |   F full screen (Esc to leave)")
+        hint.setEnabled(False)  # greyed-out hint text
+        rv.addWidget(hint)
+        self.tabs.addTab(results_page, "Results")
 
         # Tab 3: log
         self.log_ctrl = QPlainTextEdit()
@@ -167,6 +175,74 @@ class MainWindow(QMainWindow):
 
         self.lbl_timing = QLabel("")
         self.statusBar().addPermanentWidget(self.lbl_timing)
+
+        self._init_shortcuts()
+
+    # -- keyboard shortcuts -------------------------------------------------
+
+    def _init_shortcuts(self):
+        """Results navigation keys. Only active on the Results tab, so they never
+        steal typing or arrow keys from the power-tree editor."""
+        self._results_shortcuts = []
+
+        def add(key, slot):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            sc.activated.connect(slot)
+            self._results_shortcuts.append(sc)
+
+        add(Qt.Key.Key_C, self.fit_current_view)
+        add(Qt.Key.Key_F, self.toggle_full_screen)
+        add(Qt.Key.Key_Left, lambda: self.step_view(-1))
+        add(Qt.Key.Key_Right, lambda: self.step_view(+1))
+        for n in range(1, 10):
+            add(Qt.Key.Key_0 + n, lambda n=n: self.select_rail(n - 1))
+
+        # Esc leaves full screen from anywhere
+        esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        esc.activated.connect(lambda: self.isFullScreen() and self.showNormal())
+
+        self.tabs.currentChanged.connect(self._update_shortcuts_enabled)
+        self._update_shortcuts_enabled(self.tabs.currentIndex())
+
+    def _update_shortcuts_enabled(self, tab_index):
+        on_results = tab_index == self.TAB_RESULTS
+        for sc in self._results_shortcuts:
+            sc.setEnabled(on_results)
+
+    def _current_rail_view(self):
+        view = self.results_tabs.currentWidget()
+        return view if isinstance(view, RailResultsWidget) else None
+
+    def fit_current_view(self):
+        view = self._current_rail_view()
+        if view:
+            view.fit_current_view()
+
+    def step_view(self, delta):
+        view = self._current_rail_view()
+        if view:
+            view.step_view(delta)
+
+    def select_rail(self, index):
+        """Show rail number index+1, keeping the same view (e.g. F.Cu) if it has one."""
+        if not 0 <= index < self.results_tabs.count():
+            return
+        old = self._current_rail_view()
+        view_name = old.tabText(old.currentIndex()) if old else None
+        self.results_tabs.setCurrentIndex(index)
+        new = self._current_rail_view()
+        if new and view_name:
+            for i in range(new.count()):
+                if new.tabText(i) == view_name:
+                    new.setCurrentIndex(i)
+                    break
+
+    def toggle_full_screen(self):
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
 
     # -- logging ------------------------------------------------------------
 
@@ -273,10 +349,11 @@ class MainWindow(QMainWindow):
 
         self.log("Building plots...")
         drop_pct = self.spin_drop_pct.value()
-        for rail_name, r in result.rails.items():
+        for i, (rail_name, r) in enumerate(result.rails.items()):
             view = RailResultsWidget(r, result.stackup, drop_pct, board_outline=result.board_outline)
             self.rail_views.append(view)
-            self.results_tabs.addTab(view, rail_name)
+            # Number the first 9 rails to match the 1-9 keys
+            self.results_tabs.addTab(view, f"{i + 1}: {rail_name}" if i < 9 else rail_name)
 
         self.tabs.setCurrentIndex(self.TAB_RESULTS)
 

@@ -155,6 +155,198 @@ class TestResultsView(unittest.TestCase):
         self.assertLess(lo, hi)
 
 
+def _two_rail_result():
+    """SystemResult with rails +5V and +3V3 on F.Cu/B.Cu, plus a board outline."""
+    import numpy as np
+    from kipida.simulation.mesh import Mesh
+    from kipida.simulation.system import RailResult, SystemResult
+    result = SystemResult(stackup={'copper': {0: {'name': 'F.Cu'}, 2: {'name': 'B.Cu'}}, 'layer_order': [0, 2]})
+    for name, v in (("+5V", 5.0), ("+3V3", 3.3)):
+        m = Mesh()
+        m.grid_origin, m.grid_step = (10.0, 10.0), 1.0
+        res = {}
+        for nid, (xi, yi, lid) in enumerate([(0, 0, 0), (5, 3, 0), (0, 0, 2), (5, 3, 2)]):
+            m.nodes.append(nid)
+            m.node_map[(xi, yi, lid)] = nid
+            m.node_coords[nid] = (10.0 + xi, 10.0 + yi, lid)
+            res[nid] = v - 0.01 * nid
+        result.rails[name] = RailResult(name, m, res, min(res.values()), max(res.values()))
+    result.board_outline = [np.array([(0, 0), (40, 0), (40, 25), (0, 25), (0, 0)], float)]
+    return result
+
+
+class TestShortcuts(unittest.TestCase):
+    def setUp(self):
+        from PySide6.QtTest import QTest
+        from kipida.ui.main_window import MainWindow
+        self.QTest = QTest
+        self.win = MainWindow(board_adapter=None, project=None)
+        self.win.system_result = _two_rail_result()
+        self.win._update_results_ui()  # switches to the Results tab
+        self.win.show()
+        self.win.activateWindow()
+        QTest.qWaitForWindowExposed(self.win)
+
+    def tearDown(self):
+        self.win.close()
+
+    def press(self, key):
+        self.QTest.keyClick(self.win.results_tabs, key)
+        app.processEvents()
+
+    def rail_and_view(self):
+        rail = self.win._current_rail_view()
+        return self.win.results_tabs.currentIndex(), rail.tabText(rail.currentIndex())
+
+    def test_tabs_numbered(self):
+        tabs = self.win.results_tabs
+        self.assertEqual([tabs.tabText(i) for i in range(tabs.count())], ["1: +5V", "2: +3V3"])
+
+    def test_arrows_cycle_views_and_numbers_pick_rail(self):
+        self.assertEqual(self.rail_and_view(), (0, "3D View"))
+        self.press(Qt.Key.Key_Right)
+        self.assertEqual(self.rail_and_view(), (0, "F.Cu"))
+        self.press(Qt.Key.Key_2)                       # same view kept on the new rail
+        self.assertEqual(self.rail_and_view(), (1, "F.Cu"))
+        self.press(Qt.Key.Key_Right)
+        self.press(Qt.Key.Key_Right)                   # wraps around
+        self.assertEqual(self.rail_and_view(), (1, "3D View"))
+        self.press(Qt.Key.Key_Left)
+        self.assertEqual(self.rail_and_view(), (1, "B.Cu"))
+        self.press(Qt.Key.Key_9)                       # no rail 9: nothing happens
+        self.assertEqual(self.rail_and_view(), (1, "B.Cu"))
+
+    def test_fit_2d_shows_whole_board(self):
+        self.press(Qt.Key.Key_Right)                   # F.Cu map
+        vb = self.win._current_rail_view().currentWidget().plot.getPlotItem().vb
+        vb.setRange(xRange=(18, 19), yRange=(11, 12), padding=0)   # zoomed far in
+        self.press(Qt.Key.Key_C)
+        (x0, x1), (y0, y1) = vb.viewRange()
+        # Whole 40 x 25 mm board visible ...
+        self.assertTrue(x0 <= 0 and x1 >= 40 and y0 <= 0 and y1 >= 25, vb.viewRange())
+        # ... and as large as possible: with the aspect ratio locked, the limiting
+        # axis is tight (only the 2 % padding on each side)
+        tight_x = (x1 - x0) <= 40 * 1.05
+        tight_y = (y1 - y0) <= 25 * 1.05
+        self.assertTrue(tight_x or tight_y, vb.viewRange())
+
+    def test_full_screen_toggle_and_escape(self):
+        self.press(Qt.Key.Key_F)
+        self.assertTrue(self.win.isFullScreen())
+        self.press(Qt.Key.Key_F)
+        self.assertFalse(self.win.isFullScreen())
+        self.press(Qt.Key.Key_F)
+        self.press(Qt.Key.Key_Escape)
+        self.assertFalse(self.win.isFullScreen())
+
+    def test_keys_inactive_outside_results_tab(self):
+        self.win.tabs.setCurrentIndex(self.win.TAB_CONFIG)
+        app.processEvents()
+        self.press(Qt.Key.Key_2)
+        self.press(Qt.Key.Key_F)
+        self.assertEqual(self.win.results_tabs.currentIndex(), 0)
+        self.assertFalse(self.win.isFullScreen())
+
+
+class TestFit3D(unittest.TestCase):
+    def test_board_fills_view_and_stays_inside(self):
+        from PySide6.QtGui import QVector4D
+        from kipida.ui.results_view import RailResultsWidget
+        result = _two_rail_result()
+        view = RailResultsWidget(result.rails["+5V"], result.stackup, 5.0, board_outline=result.board_outline)
+        v3d = view.view_3d
+        if v3d.color_bar is None:
+            self.skipTest("3D view needs PyOpenGL")
+        view.resize(800, 500)
+        view.show()
+        app.processEvents()
+        v3d.view.setCameraPosition(distance=1e4)       # far away: board tiny
+        v3d.fit_view()
+        w, h = v3d.view.width(), v3d.view.height()
+        mvp = v3d.view.projectionMatrix((0, 0, w, h), (0, 0, w, h)) * v3d.view.viewMatrix()
+        (x0, x1), (y0, y1), (z0, z1) = v3d._bbox
+        ndc = []
+        for x in (x0, x1):
+            for y in (y0, y1):
+                for z in (z0, z1):
+                    p = mvp.map(QVector4D(x, y, z, 1.0))
+                    ndc.append(max(abs(p.x() / p.w()), abs(p.y() / p.w())))
+        self.assertLessEqual(max(ndc), 1.0)            # everything visible
+        self.assertGreater(max(ndc), 0.9)              # and as large as possible
+        view.close()
+
+
+def _layered_result():
+    """F.Cu (id 0) copper only at cell (0,0); B.Cu (id 2) at (0,0) and (1,0). 1 mm grid."""
+    from kipida.simulation.mesh import Mesh
+    from kipida.simulation.system import RailResult
+    m = Mesh()
+    m.grid_origin, m.grid_step = (0.0, 0.0), 1.0
+    volts = {(0, 0, 0): 3.30, (0, 0, 2): 3.28, (1, 0, 2): 3.25}
+    res = {}
+    for nid, ((xi, yi, lid), v) in enumerate(volts.items()):
+        m.nodes.append(nid)
+        m.node_map[(xi, yi, lid)] = nid
+        m.node_coords[nid] = (float(xi), float(yi), lid)
+        res[nid] = v
+    return RailResult("+3V3", m, res, min(res.values()), max(res.values()))
+
+
+STACKUP_2L = {'copper': {0: {'name': 'F.Cu'}, 2: {'name': 'B.Cu'}}, 'layer_order': [0, 2]}
+
+
+class TestCursorReadout(unittest.TestCase):
+    def test_2d_label_follows_cursor_over_copper_only(self):
+        from PySide6.QtCore import QPointF
+        from kipida.ui.results_view import RailResultsWidget
+        view = RailResultsWidget(_layered_result(), STACKUP_2L, 5.0)
+        view.resize(700, 500)
+        view.show()
+        view.setCurrentIndex(2)  # B.Cu map
+        app.processEvents()
+        plot = view.layer_plots[1]
+        vb = plot.plot.getPlotItem().vb
+        plot._on_mouse_moved(vb.mapViewToScene(QPointF(1.0, 0.0)))
+        self.assertTrue(plot.cursor_label.isVisible())
+        self.assertEqual(plot.cursor_label.textItem.toPlainText(), "3.2500 V")
+        pos = plot.cursor_label.pos()
+        self.assertAlmostEqual(pos.x(), 1.0, places=9)
+        self.assertAlmostEqual(pos.y(), 0.0, places=9)
+        plot._on_mouse_moved(vb.mapViewToScene(QPointF(1.0, 5.0)))  # no copper there
+        self.assertFalse(plot.cursor_label.isVisible())
+        view.close()
+
+    def test_3d_pick_returns_visible_layer(self):
+        from PySide6.QtGui import QVector4D
+        from kipida.ui.results_view import RailResultsWidget
+        view = RailResultsWidget(_layered_result(), STACKUP_2L, 5.0)
+        v3d = view.view_3d
+        if v3d.color_bar is None:
+            self.skipTest("3D view needs PyOpenGL")
+        view.resize(700, 500)
+        view.show()
+        app.processEvents()
+        v3d.view.setCameraPosition(elevation=90, azimuth=-90)  # looking straight down
+        v3d.fit_view()
+
+        def to_pixel(x_mm, y_mm, lid):
+            w, h = v3d.view.width(), v3d.view.height()
+            mvp = v3d.view.projectionMatrix((0, 0, w, h), (0, 0, w, h)) * v3d.view.viewMatrix()
+            p = mvp.map(QVector4D(x_mm, -y_mm, v3d._layer_z[lid], 1.0))
+            return (p.x() / p.w() + 1) * w / 2, (1 - p.y() / p.w()) * h / 2
+
+        # Cell (0,0): both layers have copper -> the top one (F.Cu) is what you see
+        lid, v, x, y = v3d.pick(*to_pixel(0.0, 0.0, 0))
+        self.assertEqual((lid, round(v, 4)), (0, 3.30))
+        self.assertAlmostEqual(x, 0.0, delta=0.5)
+        # Cell (1,0): F.Cu has no copper there -> the ray reaches B.Cu
+        lid, v, _x, _y = v3d.pick(*to_pixel(1.0, 0.0, 2))
+        self.assertEqual((lid, round(v, 4)), (2, 3.25))
+        # Off the board: nothing
+        self.assertIsNone(v3d.pick(*to_pixel(30.0, 30.0, 0)))
+        view.close()
+
+
 class TestMainWindow(unittest.TestCase):
     def test_build_and_show_rails(self):
         from kipida.ui.main_window import MainWindow

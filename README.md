@@ -93,8 +93,17 @@ Once "Simulation Success" appears, the UI will jump to the **Results** tab.
 
 - **Rail Selection:** A tab will be created for each power rail in your system.
 - **Per-Rail Visualization:** Inside each rail's tab, you can view:
-    - **3D View:** All copper layers of the net stacked in 3D. Drag to rotate, scroll to zoom.
-    - **Layer Views:** An interactive 2D voltage map for every copper layer, in stackup order. Pan and zoom with the mouse, hover to read the voltage at any point, and drag the colour bar handles to adjust the scale.
+    - **3D View:** All copper layers of the net stacked in 3D. Drag to rotate, scroll to zoom. Hover to see the layer and voltage under the pointer.
+    - **Layer Views:** An interactive 2D voltage map for every copper layer, in stackup order. Pan and zoom with the mouse, hover to see the voltage next to the pointer (and the coordinates above the plot), and drag the colour bar handles to adjust the scale.
+    - The hover value is the solved voltage of the mesh cell under the pointer (resolution = mesh resolution), not a value read back from the colours.
+- **Keyboard shortcuts** (Results tab):
+
+  | Key | Action |
+  |---|---|
+  | `1` – `9` | Show rail 1–9 (tabs are numbered), keeping the same view (e.g. F.Cu) |
+  | `←` / `→` | Previous / next view of the rail (3D, then each layer), wrapping around |
+  | `C` | Fit the board to the canvas (2D and 3D) |
+  | `F` | Toggle full screen; `Esc` also leaves full screen |
 - **Board outline:** The Edge.Cuts outline is drawn on every view as a position reference, and the 2D maps open framed on the whole board.
 - **Max Drop %:** Sets the colour scale range below each rail's maximum voltage. Changing it updates all plots instantly, without re-running.
 

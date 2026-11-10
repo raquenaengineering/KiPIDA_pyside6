@@ -1,7 +1,8 @@
 """Interactive result plots (pyqtgraph): per-layer voltage maps and a 3D view."""
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QRectF, QSignalBlocker
+from PySide6.QtCore import QEvent, QPoint, QRectF, QSignalBlocker
+from PySide6.QtGui import QVector4D
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QTabWidget, QVBoxLayout, QWidget
 
 from kipida.visualization.layer_grid import LayerGrid, mesh_to_layer_grids
@@ -96,21 +97,49 @@ class LayerPlot(QWidget):
             pi.addItem(self.outline_item)
             pi.autoRange()  # frame the whole board, not just this rail's copper
 
+        # Voltage label that follows the mouse pointer over copper
+        self.cursor_label = pg.TextItem(color=(255, 255, 255), fill=pg.mkBrush(0, 0, 0, 180),
+                                        anchor=(-0.08, 1.15))  # just above-right of the pointer
+        self.cursor_label.setZValue(20)
+        self.cursor_label.hide()
+        pi.addItem(self.cursor_label, ignoreBounds=True)  # must not affect auto-range / fit
+
         self.plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        self.plot.installEventFilter(self)  # hide the label when the pointer leaves
 
     def set_levels(self, lo, hi):
         self.color_bar.setLevels(values=(lo, hi))
 
+    def fit_view(self):
+        """Zoom so the board (outline and copper) fills the canvas."""
+        self.plot.getPlotItem().vb.autoRange(padding=0.02)
+
     def readout_text(self, x_mm, y_mm):
         v = self.grid.value_at(x_mm, y_mm)
+        x_mm, y_mm = round(x_mm, 2) + 0.0, round(y_mm, 2) + 0.0  # avoid "-0.00"
         where = f"X {x_mm:8.2f} mm   Y {y_mm:8.2f} mm"
         return f"{where}   |   {v:.4f} V" if v is not None else f"{where}   |   no copper"
 
     def _on_mouse_moved(self, scene_pos):
         vb = self.plot.getPlotItem().vb
-        if vb.sceneBoundingRect().contains(scene_pos):
-            p = vb.mapSceneToView(scene_pos)
-            self.readout.setText(self.readout_text(p.x(), p.y()))
+        if not vb.sceneBoundingRect().contains(scene_pos):
+            self.cursor_label.hide()
+            return
+        p = vb.mapSceneToView(scene_pos)
+        self.readout.setText(self.readout_text(p.x(), p.y()))
+        v = self.grid.value_at(p.x(), p.y())
+        if v is None:
+            self.cursor_label.hide()
+        else:
+            self.cursor_label.setText(f"{v:.4f} V")
+            self.cursor_label.setPos(p.x(), p.y())
+            self.cursor_label.show()
+
+    def eventFilter(self, obj, event):
+        # getattr: Qt can still deliver events while the widget is being torn down
+        if obj is getattr(self, "plot", None) and event.type() == QEvent.Type.Leave:
+            self.cursor_label.hide()
+        return super().eventFilter(obj, event)
 
 
 def grid_to_rgba(grid: LayerGrid, levels) -> np.ndarray:
@@ -129,13 +158,14 @@ class Rail3DView(QWidget):
     solid at any zoom and far lighter than drawing every node as a point.
     """
 
-    def __init__(self, grids, layer_order, levels, outline=None, parent=None):
+    def __init__(self, grids, layer_order, levels, outline=None, layer_names=None, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.planes = {}  # layer_id -> (GLImageItem, LayerGrid)
         self.outline_items = []
         self.color_bar = None
+        self.layer_names = layer_names or {}
         try:
             import pyqtgraph.opengl as gl
             from OpenGL import GL
@@ -172,7 +202,8 @@ class Rail3DView(QWidget):
         row.addWidget(self.view, 1)
         row.addWidget(legend)
         layout.addLayout(row, 1)
-        layout.addWidget(QLabel("Drag to rotate, scroll to zoom. Top layer is highest."))
+        layout.addWidget(QLabel("Drag to rotate, scroll to zoom. Top layer is highest. "
+                                "Hover over copper to read the voltage."))
 
         # Alpha-blended, no depth test: planes are added bottom-up so upper
         # layers draw over lower ones, and copper-free cells stay see-through.
@@ -196,10 +227,100 @@ class Rail3DView(QWidget):
                 self.view.addItem(lines)
                 self.outline_items.append(lines)
 
+        # Bounding box of everything drawn, in view coordinates (y flipped)
+        self._bbox = ((xmin, xmax), (-ymax, -ymin), (0.0, (len(order) - 1) * spacing))
         cx, cy = (xmin + xmax) / 2, -(ymin + ymax) / 2
         cz = (len(order) - 1) * spacing / 2
         self.view.opts["center"] = pg.Vector(cx, cy, cz)
         self.view.setCameraPosition(distance=span * 2.0, elevation=28, azimuth=-60)
+
+        # Voltage under the mouse pointer
+        self._layer_z = layer_z
+        self._top_first = order  # draw order reversed: the layer you see is the first hit
+        self.cursor_label = QLabel(self.view)
+        self.cursor_label.setStyleSheet("background: rgba(0, 0, 0, 180); color: white; padding: 2px 4px;")
+        self.cursor_label.hide()
+        self.view.setMouseTracking(True)
+        self.view.installEventFilter(self)
+
+    def pick(self, px, py):
+        """What is under widget pixel (px, py): (layer_id, volts, x_mm, y_mm) or None.
+
+        Casts the camera ray through the pixel and returns the first layer, from
+        the top down, with copper where the ray crosses it. That matches what is
+        drawn: upper planes are painted over lower ones.
+        """
+        if self.color_bar is None:
+            return None
+        w, h = max(self.view.width(), 1), max(self.view.height(), 1)
+        mvp = self.view.projectionMatrix((0, 0, w, h), (0, 0, w, h)) * self.view.viewMatrix()
+        inv, ok = mvp.inverted()
+        if not ok:
+            return None
+        nx, ny = 2.0 * px / w - 1.0, 1.0 - 2.0 * py / h
+        a, b = inv.map(QVector4D(nx, ny, -1.0, 1.0)), inv.map(QVector4D(nx, ny, 1.0, 1.0))
+        a = np.array([a.x(), a.y(), a.z()]) / a.w()
+        b = np.array([b.x(), b.y(), b.z()]) / b.w()
+        d = b - a
+        if abs(d[2]) < 1e-12:  # ray parallel to the layers
+            return None
+        for lid in self._top_first:
+            t = (self._layer_z[lid] - a[2]) / d[2]
+            if t < 0:
+                continue
+            x, y_view = a[0] + t * d[0], a[1] + t * d[1]
+            _item, grid = self.planes[lid]
+            v = grid.value_at(x, -y_view)  # the 3D view flips y
+            if v is not None:
+                return lid, v, x, -y_view
+        return None
+
+    def eventFilter(self, obj, event):
+        # getattr: Qt can still deliver events while the widget is being torn down
+        if getattr(self, "cursor_label", None) is not None and obj is getattr(self, "view", None):
+            if event.type() == QEvent.Type.MouseMove:
+                pos = event.position()
+                hit = self.pick(pos.x(), pos.y())
+                if hit is None:
+                    self.cursor_label.hide()
+                else:
+                    lid, v, _x, _y = hit
+                    self.cursor_label.setText(f"{self.layer_names.get(lid, lid)}  {v:.4f} V")
+                    self.cursor_label.adjustSize()
+                    self.cursor_label.move(QPoint(int(pos.x()) + 14, int(pos.y()) - 26))
+                    self.cursor_label.show()
+            elif event.type() == QEvent.Type.Leave:
+                self.cursor_label.hide()
+        return super().eventFilter(obj, event)
+
+    def fit_view(self, margin=0.04):
+        """Centre the board and move the camera as close as possible while all of
+        it stays on screen, keeping the current rotation."""
+        if self.color_bar is None:  # no 3D scene
+            return
+        (x0, x1), (y0, y1), (z0, z1) = self._bbox
+        self.view.opts["center"] = pg.Vector((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)
+        corners = [QVector4D(x, y, z, 1.0) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
+        w, h = max(self.view.width(), 1), max(self.view.height(), 1)
+        limit = 1.0 - margin
+
+        def fits(distance):
+            self.view.opts["distance"] = distance
+            mvp = self.view.projectionMatrix((0, 0, w, h), (0, 0, w, h)) * self.view.viewMatrix()
+            for c in corners:
+                p = mvp.map(c)
+                if p.w() <= 0 or abs(p.x() / p.w()) > limit or abs(p.y() / p.w()) > limit:
+                    return False
+            return True
+
+        # Closest distance at which everything is visible (fits() is monotonic in distance)
+        span = max(x1 - x0, y1 - y0, z1 - z0, 1e-3)
+        near, far = span * 0.01, span * 100.0
+        for _ in range(40):
+            mid = (near + far) / 2
+            near, far = (near, mid) if fits(mid) else (mid, far)
+        self.view.opts["distance"] = far
+        self.view.update()
 
     def _recolor(self, levels):
         for item, g in self.planes.values():
@@ -225,7 +346,8 @@ class RailResultsWidget(QTabWidget):
         grids = mesh_to_layer_grids(rail_result.mesh, rail_result.results)
         levels = drop_levels(rail_result.v_max, drop_pct)
 
-        self.view_3d = Rail3DView(grids, layer_order, levels, outline=board_outline)
+        layer_names = {lid: copper.get(lid, {}).get("name", str(lid)) for lid in grids}
+        self.view_3d = Rail3DView(grids, layer_order, levels, outline=board_outline, layer_names=layer_names)
         self.addTab(self.view_3d, "3D View")
 
         self.layer_plots = []
@@ -241,3 +363,13 @@ class RailResultsWidget(QTabWidget):
         self.view_3d.set_levels(lo, hi)
         for plot in self.layer_plots:
             plot.set_levels(lo, hi)
+
+    def step_view(self, delta):
+        """Next/previous view (3D, then layers), wrapping around."""
+        if self.count():
+            self.setCurrentIndex((self.currentIndex() + delta) % self.count())
+
+    def fit_current_view(self):
+        page = self.currentWidget()
+        if hasattr(page, "fit_view"):
+            page.fit_view()

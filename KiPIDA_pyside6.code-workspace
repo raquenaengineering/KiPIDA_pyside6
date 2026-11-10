@@ -2,6 +2,9 @@
 	"folders": [
 		{
 			"path": "."
+		},
+		{
+			"path": "../../cb/pcb/pcb_can_linear_motor_driver"
 		}
 	],
 	"settings": {}
