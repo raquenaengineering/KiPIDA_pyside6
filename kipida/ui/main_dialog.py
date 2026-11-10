@@ -8,10 +8,11 @@ from kipida.simulation.mesh import Mesher
 from kipida.simulation.solver import Solver
 from kipida.ui.power_tree_panel import PowerTreePanel
 from kipida.visualization.plotter import Plotter
+from kipida.version import get_full_version, get_window_title
 
 class KiPIDA_MainDialog(wx.Dialog):
     def __init__(self, parent, board_adapter, project=None):
-        super(KiPIDA_MainDialog, self).__init__(parent, title="Ki-PIDA: Power Integrity Analyzer", 
+        super(KiPIDA_MainDialog, self).__init__(parent, title=get_window_title(),
                                                 style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         
         self.SetSize((1000, 700))
@@ -35,7 +36,7 @@ class KiPIDA_MainDialog(wx.Dialog):
         sys.stdout = LogRedirector(self.log)
         sys.stderr = LogRedirector(self.log)
         
-        self.log("Ki-PIDA UI Initialized.")
+        self.log(f"Ki-PIDA {get_full_version()} UI Initialized.")
         if not self.board:
              self.log("ERROR: No board object connected. Plugin will not function properly.")
         else:

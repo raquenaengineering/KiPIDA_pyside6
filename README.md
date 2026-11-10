@@ -41,6 +41,9 @@ Ki-PIDA communicates with KiCad via the IPC-based API.
 3. Copy the repository folder into the `plugins` directory (it must contain `plugin.json` at its top level).
 
 > [!NOTE]
+> Ki-PIDA brings all of its dependencies (including its PySide6 GUI) through `requirements.txt` and does not rely on anything bundled with KiCad. It works with KiCad 10's bundled Python 3.11 or any Python 3.11+ selected in KiCad's preferences. KiCad 11 no longer bundles Python: install Python yourself (the Windows installer offers it) and select it in KiCad's preferences.
+
+> [!NOTE]
 > On first load, KiCad creates a dedicated Python virtual environment for the plugin and installs the packages listed in `requirements.txt`. The toolbar button appears only once that environment is ready. If it never appears, right-click the plugin's action in the PCB Editor preferences and choose **Recreate Plugin Environment**. The environment lives in `%LOCALAPPDATA%\KiCad\10.0\python-environments\` on Windows.
 
 ---

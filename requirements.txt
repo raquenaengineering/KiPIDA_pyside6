@@ -1,6 +1,14 @@
+# Runtime dependencies. KiCad installs these into the plugin's own virtual
+# environment on first load, so the plugin must not rely on anything that
+# ships with KiCad (KiCad 11 bundles no Python, wxPython or SWIG at all).
+# Every package here must have wheels for Python 3.11 (KiCad 10's bundled
+# interpreter) through 3.14. Keep in sync with pyproject.toml.
 numpy
 scipy
 shapely
 matplotlib
 kicad-python>=0.7.0
 pypardiso
+PySide6-Essentials~=6.12.0
+# Transitional: current UI is wxPython. Remove once the PySide6 port lands.
+wxPython

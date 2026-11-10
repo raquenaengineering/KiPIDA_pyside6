@@ -8,13 +8,14 @@ import kipy
 import kipy.board
 
 from kipida.ui.main_dialog import KiPIDA_MainDialog
+from kipida.version import get_full_version
 
 def main():
     # Setup logging to file for debugging
     log_file = os.path.join(tempfile.gettempdir(), 'kipida_entry.log')
     logging.basicConfig(filename=log_file, level=logging.DEBUG, filemode='w')
     logger = logging.getLogger("KiPIDA")
-    logger.info("Ki-PIDA Entry Point Started")
+    logger.info(f"Ki-PIDA {get_full_version()} Entry Point Started")
     
     # 1. Connect to KiCad
     # Use our robust connection logic (same as in extractor.py)
