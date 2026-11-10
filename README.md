@@ -93,8 +93,9 @@ Once "Simulation Success" appears, the UI will jump to the **Results** tab.
 
 - **Rail Selection:** A tab will be created for each power rail in your system.
 - **Per-Rail Visualization:** Inside each rail's tab, you can view:
-    - **3D View:** A 3D voltage plot of the entire net.
-    - **Layer Views:** Individual 2D heatmaps for every layer containing copper for that net.
+    - **3D View:** All copper layers of the net stacked in 3D. Drag to rotate, scroll to zoom.
+    - **Layer Views:** An interactive 2D voltage map for every copper layer, in stackup order. Pan and zoom with the mouse, hover to read the voltage at any point, and drag the colour bar handles to adjust the scale.
+- **Max Drop %:** Sets the colour scale range below each rail's maximum voltage. Changing it updates all plots instantly, without re-running.
 
 > [!TIP]
 > Use the **Enable Debug Log** checkbox if you encounter issues during meshing or solving to see more detail in the Log tab.
@@ -116,7 +117,7 @@ kipida/
   core/                Domain models and config persistence (pure Python)
   kicad/               Board access via kipy: net discovery, geometry extraction
   simulation/          Mesh generation, sparse DC solver, multi-rail power-tree solve
-  visualization/       Matplotlib plotting
+  visualization/       Result preparation for display (mesh -> per-layer grids)
   ui/                  PySide6 (Qt) main window, panels and dialogs
 tests/                 pytest suite
 docs/images/           README screenshots
@@ -133,7 +134,7 @@ py -3.14 -m venv .venv
 - **Extractor (`kipida/kicad/extractor.py`):** Interfaces with the KiCad API to pull filled zone geometry, track layouts, and physical stackup data.
 - **Mesher (`kipida/simulation/mesh.py`):** Discretizes continuous copper geometry into a 2D/3D resistive grid (Rasterization).
 - **Solver (`kipida/simulation/solver.py`):** Uses an Admittance Matrix (Stamps method) and optimized SciPy sparse solvers (SuperLU/CG) to solve the electrical system.
-- **Plotter (`kipida/visualization/plotter.py`):** Generates voltage heatmaps and 3D views via Matplotlib for the Results tab.
+- **Results view (`kipida/ui/results_view.py`):** Interactive per-layer voltage maps and a 3D layer stack, drawn with pyqtgraph (OpenGL for 3D) from per-layer grids built by `kipida/visualization/layer_grid.py`.
 
 ### Methodology
 The tool utilizes a **Hybrid 2.5D Finite Difference Method (FDM)**. It represents PCB layers as 2D grids of resistors connected vertically by via/PTH resistor elements. This provides the ideal balance between the speed of a 2D solver and the accuracy of a full 3D FEM for planar PCB structures.

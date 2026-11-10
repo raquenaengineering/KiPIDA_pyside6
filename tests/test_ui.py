@@ -60,6 +60,58 @@ class TestRegulatorDialog(unittest.TestCase):
         self.assertTrue(dlg.txt_eff.isEnabled())
 
 
+class TestResultsView(unittest.TestCase):
+    def _rail_result(self):
+        from kipida.simulation.mesh import Mesh
+        from kipida.simulation.system import RailResult
+        m = Mesh()
+        m.grid_origin, m.grid_step = (0.0, 0.0), 1.0
+        res = {}
+        for nid, (xi, yi, lid) in enumerate([(0, 0, 0), (1, 0, 0), (0, 0, 2), (1, 0, 2)]):
+            m.nodes.append(nid)
+            m.node_map[(xi, yi, lid)] = nid
+            m.node_coords[nid] = (float(xi), float(yi), lid)
+            res[nid] = 3.3 - 0.01 * nid
+        return RailResult("+3V3", m, res, min(res.values()), max(res.values()))
+
+    def test_tabs_follow_stackup_order(self):
+        from kipida.ui.results_view import RailResultsWidget
+        # KiCad 9+ ids: F.Cu=0, B.Cu=2 -> stackup order must win over id order
+        stackup = {'copper': {0: {'name': 'F.Cu'}, 2: {'name': 'B.Cu'}}, 'layer_order': [0, 2]}
+        view = RailResultsWidget(self._rail_result(), stackup, drop_pct=5.0)
+        self.assertEqual([view.tabText(i) for i in range(view.count())], ["3D View", "F.Cu", "B.Cu"])
+
+    def test_drop_pct_updates_levels_and_hover(self):
+        from kipida.ui.results_view import RailResultsWidget, drop_levels
+        view = RailResultsWidget(self._rail_result(), {'copper': {}, 'layer_order': []}, drop_pct=5.0)
+        plot = view.layer_plots[0]
+        self.assertEqual(tuple(round(v, 6) for v in plot.color_bar.levels()), tuple(round(v, 6) for v in drop_levels(3.3, 5.0)))
+        view.set_drop_pct(10.0)
+        lo, hi = plot.color_bar.levels()
+        self.assertAlmostEqual(lo, 3.3 * 0.9, places=6)
+        self.assertAlmostEqual(hi, 3.3, places=6)
+        self.assertIn("3.2900 V", plot.readout_text(1.0, 0.0))
+        self.assertIn("no copper", plot.readout_text(5.0, 5.0))
+
+    def test_3d_texture_transparent_outside_copper(self):
+        from kipida.ui.results_view import grid_to_rgba
+        from kipida.visualization.layer_grid import mesh_to_layer_grids
+        r = self._rail_result()
+        r.mesh.node_map[(3, 2, 0)] = 99  # widen the grid: cells in between have no copper
+        r.results[99] = 3.3
+        g = mesh_to_layer_grids(r.mesh, r.results)[0]
+        rgba = grid_to_rgba(g, (3.2, 3.3))
+        self.assertEqual(rgba.shape, g.values.shape + (4,))
+        self.assertEqual(rgba.dtype.name, "uint8")
+        self.assertEqual(rgba[0, 0, 3], 255)   # copper: opaque
+        self.assertEqual(rgba[2, 1, 3], 0)     # no copper: transparent
+
+    def test_zero_drop_rail_does_not_break_levels(self):
+        from kipida.ui.results_view import drop_levels
+        lo, hi = drop_levels(3.3, 0.0)
+        self.assertLess(lo, hi)
+
+
 class TestMainWindow(unittest.TestCase):
     def test_build_and_show_rails(self):
         from kipida.ui.main_window import MainWindow

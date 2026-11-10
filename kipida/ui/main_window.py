@@ -3,17 +3,16 @@ import time
 import traceback
 
 from PySide6.QtCore import QElapsedTimer, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDoubleSpinBox, QHBoxLayout, QLabel, QMainWindow,
-    QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSplitter, QTabWidget,
+    QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
 from kipida.simulation.system import PowerTreeCycleError, SystemSimulator, format_timings
 from kipida.ui.power_tree_panel import PowerTreePanel
+from kipida.ui.results_view import RailResultsWidget
 from kipida.version import get_full_version, get_window_title
-from kipida.visualization.plotter import Plotter
 
 
 class _StreamToLog:
@@ -67,6 +66,7 @@ class MainWindow(QMainWindow):
         self.board = board_adapter
         self.project = project
         self.system_result = None
+        self.rail_views = []  # RailResultsWidget per solved rail
         self._worker = None
 
         # Live elapsed-time display while a simulation runs
@@ -126,6 +126,8 @@ class MainWindow(QMainWindow):
         self.spin_drop_pct.setDecimals(1)
         self.spin_drop_pct.setRange(0.0, 100.0)
         self.spin_drop_pct.setValue(5.0)
+        self.spin_drop_pct.setToolTip("Colour scale range below each rail's maximum voltage. Updates the plots live.")
+        self.spin_drop_pct.valueChanged.connect(self._on_drop_pct_changed)
         sett.addWidget(QLabel("Max Drop %:"))
         sett.addWidget(self.spin_drop_pct)
         sett.addSpacing(20)
@@ -242,22 +244,17 @@ class MainWindow(QMainWindow):
 
     # -- results ------------------------------------------------------------
 
-    def _plot_page(self, png_bytes):
-        pix = QPixmap()
-        pix.loadFromData(png_bytes, "PNG")
-        label = QLabel()
-        label.setPixmap(pix)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        area = QScrollArea()
-        area.setWidget(label)
-        area.setWidgetResizable(True)
-        return area
-
     def _clear_results_tabs(self):
+        self.rail_views = []
         while self.results_tabs.count():
             page = self.results_tabs.widget(0)
             self.results_tabs.removeTab(0)
             page.deleteLater()
+
+    def _on_drop_pct_changed(self, drop_pct):
+        """Re-colour existing plots live; no re-render or re-run needed."""
+        for view in self.rail_views:
+            view.set_drop_pct(drop_pct)
 
     def _update_results_ui(self):
         result = self.system_result
@@ -274,31 +271,12 @@ class MainWindow(QMainWindow):
         if not result.rails:
             return
 
-        stackup = result.stackup
+        self.log("Building plots...")
         drop_pct = self.spin_drop_pct.value()
-        plotter = Plotter(debug=self.chk_debug.isChecked())
-        self.log("Rendering plots...")
-
         for rail_name, r in result.rails.items():
-            rail_tabs = QTabWidget()
-            mesh = r.mesh
-            mesh.results = r.results  # plotter reads results from the mesh
-            # Colour scale: from (1 - drop%) of nominal up to the max voltage
-            plot_vmin = r.v_max * (1.0 - drop_pct / 100.0)
-
-            png_3d = plotter.plot_3d_mesh(mesh, stackup, vmin=plot_vmin, vmax=r.v_max)
-            if png_3d:
-                rail_tabs.addTab(self._plot_page(png_3d), "3D View")
-
-            for lid in sorted({n[2] for n in mesh.node_coords.values()}):
-                l_name = str(lid)
-                if stackup and 'copper' in stackup and lid in stackup['copper']:
-                    l_name = stackup['copper'][lid].get('name', str(lid))
-                png_2d = plotter.plot_layer_2d(mesh, lid, stackup, vmin=plot_vmin, vmax=r.v_max, layer_name=l_name)
-                if png_2d:
-                    rail_tabs.addTab(self._plot_page(png_2d), l_name)
-
-            self.results_tabs.addTab(rail_tabs, rail_name)
+            view = RailResultsWidget(r, result.stackup, drop_pct)
+            self.rail_views.append(view)
+            self.results_tabs.addTab(view, rail_name)
 
         self.tabs.setCurrentIndex(self.TAB_RESULTS)
 

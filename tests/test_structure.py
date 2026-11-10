@@ -11,14 +11,14 @@ class TestPluginStructure(unittest.TestCase):
             from kipida.core import models, config_manager
             from kipida.kicad import discovery, extractor
             from kipida.simulation import mesh, solver, system
-            from kipida.visualization import plotter
+            from kipida.visualization import layer_grid
         except ImportError as e:
             self.fail(f"Failed to import Core Modules: {e}")
 
     def test_ui_import(self):
         """test that the UI modules can be imported (requires PySide6)"""
         try:
-            from kipida.ui import main_window, power_tree_panel, component_selector, regulator_dialog
+            from kipida.ui import main_window, power_tree_panel, component_selector, regulator_dialog, results_view
             from kipida import app
         except ImportError as e:
             self.fail(f"Failed to import UI Modules: {e}")

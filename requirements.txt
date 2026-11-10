@@ -6,7 +6,11 @@
 numpy
 scipy
 shapely
+# Background only (mesh rasterisation via matplotlib.path); not used for display
 matplotlib
 kicad-python>=0.7.0
 pypardiso
 PySide6-Essentials~=6.12.0
+# Result plots: interactive 2D maps, and the 3D view (OpenGL)
+pyqtgraph~=0.14.0
+PyOpenGL~=3.1
