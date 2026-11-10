@@ -115,9 +115,14 @@ def main():
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Ki-PIDA")
     app.setApplicationVersion(get_full_version())
-    icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "kipida.png")
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
+    resources = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources")
+    icon = QIcon()
+    for size in (24, 48):  # Qt picks the best size for title bar / taskbar
+        path = os.path.join(resources, f"kipida-{size}.png")
+        if os.path.exists(path):
+            icon.addFile(path)
+    if not icon.isNull():
+        app.setWindowIcon(icon)
 
     # 3. Create and show the main window
     try:

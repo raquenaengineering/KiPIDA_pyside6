@@ -18,8 +18,8 @@
             "show-button": true,
             "scopes": ["pcb"],
             "entrypoint": "ipc_entry.py",
-            "icons-light": ["resources/kipida.png"],
-            "icons-dark": ["resources/kipida.png"]
+            "icons-light": ["resources/kipida-24.png", "resources/kipida-48.png"],
+            "icons-dark": ["resources/kipida-24.png", "resources/kipida-48.png"]
         }
     ]
 }

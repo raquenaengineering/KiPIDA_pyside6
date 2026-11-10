@@ -109,7 +109,8 @@ plugin.json            KiCad IPC plugin manifest (must stay at root)
 ipc_entry.py           Entry point launched by KiCad (thin launcher)
 requirements.txt       Runtime deps KiCad installs into the plugin env
 pyproject.toml         Dev metadata, optional deps, pytest config
-resources/             Plugin icon referenced by plugin.json
+resources/             Plugin icons (24/48 px) referenced by plugin.json
+tools/                 Dev scripts (make_icon.py regenerates the icons)
 kipida/
   app.py               KiCad IPC connection + app bootstrap
   core/                Domain models and config persistence (pure Python)
