@@ -27,6 +27,28 @@ class Solver:
         if self.log_callback:
             self.log_callback(f"[SOLVER] {msg}")
 
+    def _report_islands(self, G_csr, sources, id_to_idx):
+        """Log disconnected copper islands, warning about any without a voltage source."""
+        try:
+            from scipy.sparse.csgraph import connected_components
+            n_components, labels = connected_components(csgraph=G_csr, directed=False, return_labels=True)
+            if n_components <= 1:
+                return n_components
+            self._log(f"Detected {n_components} isolated copper islands.")
+            island_has_source = [False] * n_components
+            for source in sources:
+                idx = id_to_idx.get(source['node_id'])
+                if idx is not None:
+                    island_has_source[labels[idx]] = True
+            for i, has_src in enumerate(island_has_source):
+                if not has_src:
+                    n_nodes = np.count_nonzero(labels == i)
+                    self._log(f"  Warning: Island #{i} ({n_nodes} nodes) has no voltage source. Results may be undefined.")
+            return n_components
+        except Exception as e:
+            self._log(f"Connectivity diagnostic failed: {e}")
+            return None
+
     def solve(self, mesh, sources, loads):
         """
         Solves the DC circuit Mesh: [G][V] = [I]
@@ -102,6 +124,11 @@ class Solver:
                 idx = id_to_idx[nid]
                 I[idx] -= current
                 
+        # Diagnostics: copper islands. Must run on the network *before* the
+        # voltage sources are applied: fixing a node's voltage replaces its row,
+        # which would make nodes inside a source pad look disconnected.
+        self._report_islands(G.tocsr(), sources, id_to_idx)
+
         # 5. Apply Voltage Sources (Dirichlet BCs)
         for source in sources:
             nid = source.get('node_id')
@@ -118,28 +145,7 @@ class Solver:
         # 6. Solve System
         # Convert to CSR for solving efficiency
         G_csr = G.tocsr()
-        
-        # Diagnostics: Island Detection
-        try:
-            from scipy.sparse.csgraph import connected_components
-            n_components, labels = connected_components(csgraph=G_csr, directed=False, return_labels=True)
-            
-            if n_components > 1:
-                self._log(f"Detected {n_components} isolated copper islands.")
-                # Check if each island has a source
-                island_has_source = [False] * n_components
-                for source in sources:
-                    idx = id_to_idx.get(source['node_id'])
-                    if idx is not None:
-                        island_has_source[labels[idx]] = True
-                
-                for i, has_src in enumerate(island_has_source):
-                    if not has_src:
-                        n_nodes = np.count_nonzero(labels == i)
-                        self._log(f"  Warning: Island #{i} ({n_nodes} nodes) has no voltage source. Results may be undefined.")
-        except Exception as e:
-            self._log(f"Connectivity diagnostic failed: {e}")
-            
+
         try:
             if pypardiso is not None:
                 if self.debug: self._log("Using high-performance PyPardiso solver.")

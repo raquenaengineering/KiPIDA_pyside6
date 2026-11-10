@@ -61,7 +61,7 @@ def _bezier_points(p0, c1, c2, p1) -> np.ndarray:
     return (1 - t) ** 3 * p0 + 3 * (1 - t) ** 2 * t * c1 + 3 * (1 - t) * t ** 2 * c2 + t ** 3 * p1
 
 
-def _polyline_points(polyline) -> np.ndarray:
+def polyline_points(polyline) -> np.ndarray:
     """kipy PolyLine (points and arc nodes) -> closed (N, 2) array."""
     parts = []
     for node in polyline.nodes:
@@ -91,8 +91,8 @@ def shape_to_polylines(shape) -> List[np.ndarray]:
     if hasattr(shape, "polygons"):                                             # polygon(s) with holes
         out = []
         for poly in shape.polygons:
-            out.append(_polyline_points(poly.outline))
-            out.extend(_polyline_points(h) for h in poly.holes)
+            out.append(polyline_points(poly.outline))
+            out.extend(polyline_points(h) for h in poly.holes)
         return [p for p in out if len(p) > 1]
     if hasattr(shape, "control1") and hasattr(shape, "control2"):              # cubic bezier
         return [_bezier_points(_xy(shape.start), _xy(shape.control1), _xy(shape.control2), _xy(shape.end))]

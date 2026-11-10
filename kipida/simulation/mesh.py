@@ -2,6 +2,8 @@
 import sys
 import math
 
+from kipida.kicad.padstack import copper_diameter_mm, copper_size_mm, drill_diameter_mm
+
 # Use explicit check if needed, but we assume kipy objects are passed
 def to_mm(val):
     return val / 1e6
@@ -306,23 +308,24 @@ class Mesher:
                     is_pth = (p_type_val == 1) or ('THROUGH' in p_type_str and 'NON' not in p_type_str)
                     
                     if is_pth:
-                            # Drill Size
-                            drill_size = self._get_val(pad, 'drill_size')
-                            d_x = self._get_val(drill_size, 'x', 0)
-                            
                             pos = self._get_val(pad, 'position')
-                            
+
                             # Get layers from padstack
                             layers = self._get_val(pad, 'layers')
                             if not layers:
                                 ps = self._get_val(pad, 'padstack')
                                 if ps:
                                     layers = self._get_val(ps, 'layers')
-                            
-                            self._add_vertical_stack(mesh, pos, 
-                                                    layers=layers, 
-                                                    diameter=to_mm(d_x), 
-                                                    stackup=stackup)
+
+                            # Barrel resistance from the drill; node search over the pad copper
+                            size = copper_size_mm(pad)
+                            pad_mm = min(size) if size else None
+                            drill_mm = drill_diameter_mm(pad, default=pad_mm)
+                            self._add_vertical_stack(mesh, pos,
+                                                    layers=layers,
+                                                    diameter=drill_mm or 0.0,
+                                                    stackup=stackup,
+                                                    search_diameter=max(pad_mm or 0.0, drill_mm or 0.0))
 
         return mesh
 
@@ -354,8 +357,10 @@ class Mesher:
         mesh.G_coo_data.extend(np.concatenate(data))
 
     def _calculate_vertical_g(self, layer_a, layer_b, stackup, diameter_mm):
+        """Conductance of a plated barrel between two layers. diameter_mm: drill diameter."""
         if layer_a == layer_b: return 1.0e9
-        plating_thick = 0.025 
+        plating_thick = 0.025
+        # Copper ring area: pi/4 * (d^2 - (d - 2t)^2) = pi * (d*t - t^2)
         area = math.pi * (diameter_mm * plating_thick - plating_thick**2)
         if area <= 0: return 1000.0 
         rho = stackup.get('resistivity', 1.68e-5)
@@ -427,8 +432,10 @@ class Mesher:
         if not pos: return
 
         x_mm, y_mm = to_mm(pos.x), to_mm(pos.y)
-        dia_mm = to_mm(self._get_val(via, 'width', 0.6*1e6))
-        radius_mm = dia_mm / 2.0
+        # Search for mesh nodes over the via pad; barrel resistance from the drill
+        pad_mm = copper_diameter_mm(via, default=0.6)
+        drill_mm = drill_diameter_mm(via, default=pad_mm)
+        radius_mm = pad_mm / 2.0
         
         nodes_in_stack = []
         # Sort layers to ensure vertical sequence
@@ -446,17 +453,18 @@ class Mesher:
             nid_b = nodes_in_stack[i+1]
             la = mesh.node_coords[nid_a][2]
             lb = mesh.node_coords[nid_b][2]
-            g_via = self._calculate_vertical_g(la, lb, stackup, dia_mm)
+            g_via = self._calculate_vertical_g(la, lb, stackup, drill_mm)
             mesh.add_edge_direct(nid_a, nid_b, g_via)
 
-    def _add_vertical_stack(self, mesh, pos, layers, diameter, stackup):
+    def _add_vertical_stack(self, mesh, pos, layers, diameter, stackup, search_diameter=None):
+        """Connect a through-hole pad across layers. diameter: drill (barrel) size."""
         if layers is None or len(layers) == 0:
             layers = sorted(stackup['copper'].keys())
         else:
              layers = sorted(list(layers))
-             
+
         x_mm, y_mm = to_mm(pos.x), to_mm(pos.y)
-        radius_mm = diameter / 2.0
+        radius_mm = (search_diameter or diameter) / 2.0
         
         nodes_in_stack = []
         for layer in layers:

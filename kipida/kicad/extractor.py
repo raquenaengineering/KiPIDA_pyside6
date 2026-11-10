@@ -1,5 +1,7 @@
 import logging
 import math
+
+from kipida.kicad.padstack import angle_degrees, copper_diameter_mm
 try:
     from shapely.geometry import LineString, Polygon, MultiPolygon, Point, box
     from shapely.ops import unary_union
@@ -26,6 +28,29 @@ def to_mm(val_nm):
 # Tracks and vias are widened by this much on each side so that thin copper
 # still covers mesh grid points.
 TRACK_SAFETY_BUFFER_MM = 0.05
+
+# kipy PadStackShape values (KiCad 9/10 protobuf API)
+PAD_SHAPE_CIRCLE = 1
+PAD_SHAPE_OVAL = 3
+
+
+def _is_pad_shape(shape, code):
+    names = {PAD_SHAPE_CIRCLE: 'PSS_CIRCLE', PAD_SHAPE_OVAL: 'PSS_OVAL'}
+    return shape == code or str(shape) == names[code]
+
+
+def _kicad_polygon_to_shapely(kicad_poly):
+    """kipy PolygonWithHoles (nm, may contain arcs) -> shapely Polygon in mm, or None."""
+    from kipida.kicad.outline import polyline_points  # mm, arcs flattened
+    try:
+        shell = polyline_points(kicad_poly.outline)
+        holes = [polyline_points(h) for h in kicad_poly.holes]
+    except Exception:
+        return None
+    if len(shell) < 4:
+        return None
+    poly = Polygon(shell, [h for h in holes if len(h) >= 4])
+    return poly if poly.is_valid else poly.buffer(0)
 
 class GeometryExtractor:
     def __init__(self, board, debug=False, log_callback=None):
@@ -79,6 +104,74 @@ class GeometryExtractor:
             try: return getattr(self.board, method_name)()
             except: pass
         return []
+
+    # -- pads -----------------------------------------------------------------
+
+    def _pad_layers(self, pad):
+        layers = self._get_val(pad, 'layers')
+        if not layers:
+            ps = self._get_val(pad, 'padstack')
+            layers = self._get_val(ps, 'layers') or self._get_val(ps, 'copper_layers') or []
+        return list(layers)
+
+    def _pad_polygons(self, net_pads):
+        """Yield (layer_id, shapely polygon) for each pad on each of its copper layers.
+
+        Uses KiCad's exact pad outlines (rotation, rounded corners, ovals, custom
+        shapes) via the IPC API, one request per layer. Falls back to drawing the
+        pad from its size/shape/angle if the API call is unavailable or fails.
+        """
+        by_layer = {}
+        for pad, layers in net_pads:
+            for lid in layers:
+                by_layer.setdefault(lid, []).append(pad)
+
+        exact_api = getattr(self.board, 'get_pad_shapes_as_polygons', None)
+        for lid, pads in by_layer.items():
+            exact = [None] * len(pads)
+            if exact_api is not None:
+                try:
+                    exact = list(exact_api(pads, lid))
+                except Exception as e:
+                    self.logger.debug(f"Exact pad shapes unavailable on layer {lid} ({e}); using approximation.")
+            for pad, kicad_poly in zip(pads, exact):
+                poly = _kicad_polygon_to_shapely(kicad_poly) if kicad_poly is not None else None
+                if poly is None or poly.is_empty:
+                    poly = self._pad_shape_approx(pad)
+                if poly is not None and not poly.is_empty:
+                    yield lid, poly
+
+    def _pad_shape_approx(self, pad):
+        """Pad outline from its size, shape and angle (fallback when KiCad can't provide it)."""
+        pos = self._get_val(pad, 'position')
+        x_mm, y_mm = to_mm(self._get_val(pos, 'x', 0)), to_mm(self._get_val(pos, 'y', 0))
+
+        ps = self._get_val(pad, 'padstack')
+        size = self._get_val(pad, 'size')
+        shape = self._get_val(pad, 'shape')
+        if size is None:
+            copper = self._get_val(ps, 'copper_layers', [])
+            if copper:
+                size = self._get_val(copper[0], 'size')
+                shape = self._get_val(copper[0], 'shape')
+        w_mm = to_mm(self._get_val(size, 'x', 0)) or 1.0
+        h_mm = to_mm(self._get_val(size, 'y', 0)) or 1.0
+
+        # kipy gives the (absolute) pad angle as an Angle object, not a number
+        angle = angle_degrees(self._get_val(pad, 'rotation')) or angle_degrees(self._get_val(ps, 'angle')) or 0.0
+
+        if _is_pad_shape(shape, PAD_SHAPE_CIRCLE):
+            return Point(x_mm, y_mm).buffer(min(w_mm, h_mm) / 2)
+        if _is_pad_shape(shape, PAD_SHAPE_OVAL) and w_mm != h_mm:
+            r = min(w_mm, h_mm) / 2
+            half = (max(w_mm, h_mm) - min(w_mm, h_mm)) / 2
+            axis = [(-half, 0), (half, 0)] if w_mm > h_mm else [(0, -half), (0, half)]
+            local = LineString(axis).buffer(r)
+        else:  # rectangle, rounded/chamfered rectangle, trapezoid, custom: bounding box
+            local = box(-w_mm / 2, -h_mm / 2, w_mm / 2, h_mm / 2)
+        # KiCad angles are counter-clockwise on screen; with y pointing down that
+        # is a clockwise (negative) rotation in shapely's maths convention.
+        return affinity.translate(affinity.rotate(local, -angle, origin=(0, 0)), x_mm, y_mm)
 
     # Cache for stackup data
     _stackup_cache = None
@@ -409,7 +502,7 @@ class GeometryExtractor:
             x_mm = to_mm(self._get_val(pos, 'x', 0))
             y_mm = to_mm(self._get_val(pos, 'y', 0))
             
-            width_mm = to_mm(self._get_val(via, 'width', 0.6*1e6))
+            width_mm = copper_diameter_mm(via, default=0.6)  # via pad (annular ring) diameter
             poly = Point(x_mm, y_mm).buffer(width_mm / 2 + safety_buffer)
             
             # Vias exist on all layers in their pair (usually through-all)
@@ -435,110 +528,20 @@ class GeometryExtractor:
                     add_shape(lid, poly)
                     
         # 2. Process Pads (Footprints)
-        footprints = self._get_board_items('footprints')
-        for fp in footprints:
+        net_pads = []  # (pad, [copper layer ids])
+        for fp in self._get_board_items('footprints'):
             pads = self._get_val(fp, 'pads')
-            is_def_pads = False
-            
-            if pads is None:
-                defn = self._get_val(fp, 'definition')
-                pads = self._get_val(defn, 'pads', [])
-                is_def_pads = True
-                
-            # Get footprint transforms if needed
-            fp_x, fp_y, fp_rot = 0, 0, 0
-            if is_def_pads:
-                fp_pos = self._get_val(fp, 'position')
-                fp_x = to_mm(self._get_val(fp_pos, 'x', 0))
-                fp_y = to_mm(self._get_val(fp_pos, 'y', 0))
-                fp_rot = self._get_val(fp, 'orientation', 0)
-                # Ensure float
-                try: fp_rot = float(fp_rot)
-                except: fp_rot = 0.0
-
+            if pads is None:  # kipy: pads live in the footprint definition (absolute positions)
+                pads = self._get_val(self._get_val(fp, 'definition'), 'pads', [])
             for pad in pads:
-                net = self._get_val(pad, 'net')
-                p_net_name = self._get_val(net, 'name', "")
-                    
-                if p_net_name != net_name:
+                if self._get_val(self._get_val(pad, 'net'), 'name', "") != net_name:
                     continue
-                            
-                # Geometry
-                # Position (Absolute)
-                pos = self._get_val(pad, 'position')
-                x_mm = to_mm(self._get_val(pos, 'x', 0))
-                y_mm = to_mm(self._get_val(pos, 'y', 0))
-                
-                # Size & Shape
-                w_mm = 0
-                h_mm = 0
-                shape_type = 0 # 0=Circle, 1=Rect, 2=RoundRect/Oval? Need verification.
-                
-                # Try direct size first
-                size = self._get_val(pad, 'size')
-                if size:
-                    w_mm = to_mm(self._get_val(size, 'x', 0))
-                    h_mm = to_mm(self._get_val(size, 'y', 0))
-                    shape_type = self._get_val(pad, 'shape', 1)
-                
-                # Fallback to padstack
-                if w_mm == 0:
-                    ps = self._get_val(pad, 'padstack')
-                    if ps:
-                        cls = self._get_val(ps, 'copper_layers', [])
-                        if cls and len(cls) > 0:
-                            l0 = cls[0]
-                            sz = self._get_val(l0, 'size')
-                            w_mm = to_mm(self._get_val(sz, 'x', 0))
-                            h_mm = to_mm(self._get_val(sz, 'y', 0))
-                            shape_type = self._get_val(l0, 'shape', 1)
+                copper = [lid for lid in self._pad_layers(pad) if is_copper(lid)]
+                if copper:
+                    net_pads.append((pad, copper))
 
-                if w_mm == 0: w_mm = 1.0
-                if h_mm == 0: h_mm = 1.0
-
-                # Rotation
-                pad_rot = self._get_val(pad, 'rotation', 0)
-                if pad_rot == 0:
-                     ps = self._get_val(pad, 'padstack')
-                     pad_rot = self._get_val(ps, 'angle', 0)
-                try: pad_rot = float(pad_rot)
-                except: pad_rot = 0.0
-                
-                # Create Shape
-                # Shape types (Empirical/Guess based on kipy enum): 
-                # PSS_CIRCLE = 0, PSS_RECT = 1, PSS_ROUNDRECT = 2, PSS_OVAL = 3
-                # For now, treat Circle as Circle, everything else as Box/Rect
-                # If only one dimension is relevant for circle, usually x==y
-                
-                # Note: 'shape' attribute value 2 seen in inspection for Rect/RoundRect pads
-                
-                pad_poly = None
-                
-                if str(shape_type) == 'PSS_CIRCLE' or shape_type == 0:
-                     # Circle
-                     pad_poly = Point(x_mm, y_mm).buffer(w_mm / 2)
-                else:
-                    # Rectangle / Oval / RoundRect
-                    minx, miny = -w_mm/2, -h_mm/2
-                    maxx, maxy = w_mm/2, h_mm/2
-                    base_box = box(minx, miny, maxx, maxy)
-                    rotated_shape = affinity.rotate(base_box, -pad_rot, origin=(0,0))
-                    pad_poly = affinity.translate(rotated_shape, x_mm, y_mm)
-                
-                # Layers
-                layers = self._get_val(pad, 'layers')
-                if not layers:
-                    ps = self._get_val(pad, 'padstack')
-                    if ps:
-                        layers = self._get_val(ps, 'layers')
-                        if not layers:
-                             layers = self._get_val(ps, 'copper_layers')
-
-                if not layers: layers = []
-                
-                for lid in layers:
-                   if is_copper(lid):
-                       add_shape(lid, pad_poly)
+        for lid, pad_poly in self._pad_polygons(net_pads):
+            add_shape(lid, pad_poly)
 
         # 3. Process Zones
         zones = self._get_board_items('zones')
