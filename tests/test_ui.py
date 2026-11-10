@@ -106,6 +106,49 @@ class TestResultsView(unittest.TestCase):
         self.assertEqual(rgba[0, 0, 3], 255)   # copper: opaque
         self.assertEqual(rgba[2, 1, 3], 0)     # no copper: transparent
 
+    def test_board_outline_drawn_on_all_views(self):
+        import numpy as np
+        from kipida.ui.results_view import RailResultsWidget
+        outline = [np.array([(-5, -5), (20, -5), (20, 10), (-5, 10), (-5, -5)], float)]
+        stackup = {'copper': {0: {'name': 'F.Cu'}, 2: {'name': 'B.Cu'}}, 'layer_order': [0, 2]}
+        view = RailResultsWidget(self._rail_result(), stackup, drop_pct=5.0, board_outline=outline)
+        for plot in view.layer_plots:
+            self.assertIsNotNone(plot.outline_item)
+            x, y = plot.outline_item.getData()
+            self.assertEqual(len(x), 6)  # 5 points + NaN separator
+            # The view is framed on the whole board, not only the small copper area
+            (x0, x1), (y0, y1) = plot.plot.getPlotItem().vb.viewRange()
+            self.assertLessEqual(x0, -5)
+            self.assertGreaterEqual(x1, 20)
+        if view.view_3d.planes:  # 3D needs PyOpenGL
+            self.assertEqual(len(view.view_3d.outline_items), 2)  # one per layer
+
+    def test_3d_view_has_linked_color_legend(self):
+        import numpy as np
+        from kipida.ui.results_view import RailResultsWidget
+        view = RailResultsWidget(self._rail_result(), {}, drop_pct=5.0)
+        v3d = view.view_3d
+        if not v3d.planes:
+            self.skipTest("3D view needs PyOpenGL")
+        self.assertIsNotNone(v3d.color_bar)
+
+        # Max Drop % moves the 3D legend like the 2D ones
+        view.set_drop_pct(10.0)
+        lo, hi = v3d.color_bar.levels()
+        self.assertAlmostEqual(lo, 3.3 * 0.9, places=6)
+
+        # Dragging the legend handles (levels change + signal) re-colours the planes
+        item, _g = next(iter(v3d.planes.values()))
+        before = np.array(item.data, copy=True)
+        v3d.color_bar.setLevels(values=(3.29, 3.30))
+        v3d.color_bar.sigLevelsChanged.emit(v3d.color_bar)
+        self.assertFalse(np.array_equal(before, item.data))
+
+    def test_no_outline_is_fine(self):
+        from kipida.ui.results_view import RailResultsWidget
+        view = RailResultsWidget(self._rail_result(), {}, drop_pct=5.0, board_outline=[])
+        self.assertIsNone(view.layer_plots[0].outline_item)
+
     def test_zero_drop_rail_does_not_break_levels(self):
         from kipida.ui.results_view import drop_levels
         lo, hi = drop_levels(3.3, 0.0)

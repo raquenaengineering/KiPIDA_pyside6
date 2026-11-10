@@ -95,6 +95,7 @@ Once "Simulation Success" appears, the UI will jump to the **Results** tab.
 - **Per-Rail Visualization:** Inside each rail's tab, you can view:
     - **3D View:** All copper layers of the net stacked in 3D. Drag to rotate, scroll to zoom.
     - **Layer Views:** An interactive 2D voltage map for every copper layer, in stackup order. Pan and zoom with the mouse, hover to read the voltage at any point, and drag the colour bar handles to adjust the scale.
+- **Board outline:** The Edge.Cuts outline is drawn on every view as a position reference, and the 2D maps open framed on the whole board.
 - **Max Drop %:** Sets the colour scale range below each rail's maximum voltage. Changing it updates all plots instantly, without re-running.
 
 > [!TIP]

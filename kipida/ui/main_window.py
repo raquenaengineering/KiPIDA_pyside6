@@ -274,7 +274,7 @@ class MainWindow(QMainWindow):
         self.log("Building plots...")
         drop_pct = self.spin_drop_pct.value()
         for rail_name, r in result.rails.items():
-            view = RailResultsWidget(r, result.stackup, drop_pct)
+            view = RailResultsWidget(r, result.stackup, drop_pct, board_outline=result.board_outline)
             self.rail_views.append(view)
             self.results_tabs.addTab(view, rail_name)
 

@@ -10,6 +10,7 @@ from typing import Callable, Dict, List, Optional
 
 from kipida.core.models import PowerRail, VoltageRegulator
 from kipida.kicad.extractor import GeometryExtractor
+from kipida.kicad.outline import extract_board_outline
 from kipida.simulation.mesh import Mesher, Mesh
 from kipida.simulation.solver import Solver
 
@@ -43,6 +44,7 @@ class SystemResult:
     solve_order: List[str] = field(default_factory=list)
     rails: Dict[str, RailResult] = field(default_factory=dict)  # in solve order
     elapsed_s: float = 0.0  # wall time of the whole run, incl. stackup and skipped rails
+    board_outline: list = field(default_factory=list)  # Edge.Cuts polylines, (N, 2) arrays in mm
 
 
 def format_timings(timings: Dict[str, float]) -> str:
@@ -238,6 +240,10 @@ class SystemSimulator:
         sorted_rails = topological_sort_rails(rails)
         result = SystemResult(stackup=stackup, solve_order=[r.net_name for r in sorted_rails])
         self.log(f"Rail solve order: {' -> '.join(result.solve_order)}")
+
+        # Board outline (Edge.Cuts) for display only
+        result.board_outline = extract_board_outline(self.board, log=self.log)
+        self.log(f"Board outline: {len(result.board_outline)} Edge.Cuts polyline(s)")
 
         rail_by_name = {r.net_name: r for r in rails}
         rail_total_current = {r.net_name: 0.0 for r in rails}
