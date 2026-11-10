@@ -1,115 +1,67 @@
-
-import unittest
-import sys
-import os
+"""GeometryExtractor tests using small kipy-style (IPC API) fake board objects."""
 import math
+import unittest
 
-try:
-    from shapely.geometry import LineString, Polygon, Point, box
-    import shapely.affinity
-except ImportError:
-    pass
+from kipida.kicad.extractor import GeometryExtractor, TRACK_SAFETY_BUFFER_MM
 
-# 1. Pcbnew Mock
-class MockPcbnew:
-    PAD_SHAPE_CIRCLE = 1
-    PAD_SHAPE_RECT = 2
-    PAD_SHAPE_ROUNDRECT = 3
-    PAD_SHAPE_OVAL = 4
-    
-    class ActionPlugin: pass
-    class PCB_VIA: pass
-    class PCB_TRACK: pass
-    
-    @staticmethod
-    def ToMM(val): return val / 1000000.0
-    
-    @staticmethod
-    def IsCopperLayer(lid): return lid in [0, 31]
 
-if 'pcbnew' not in sys.modules:
-    sys.modules['pcbnew'] = MockPcbnew
+class FakeNet:
+    def __init__(self, name):
+        self.name = name
 
-import pcbnew
 
-# 2. Other Mocks
-class MockBoard:
+class FakeVector:
+    """kipy Vector2: coordinates in nanometres."""
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+
+class FakeTrack:
+    def __init__(self, net, layer, start, end, width):
+        self.net = FakeNet(net)
+        self.layer = layer
+        self.start = FakeVector(*start)
+        self.end = FakeVector(*end)
+        self.width = width
+
+
+class FakeBoard:
     def __init__(self):
         self.tracks = []
+        self.vias = []
         self.footprints = []
         self.zones = []
-        self.design_settings = MockDesignSettings()
-        self.layers_copper = {0: "F_Cu", 31: "B_Cu"} # Example IDs
 
-    def GetDesignSettings(self): return self.design_settings
-    def GetEnabledLayers(self): return MockSeq(list(self.layers_copper.keys()))
-    def IsLayerCopper(self, layer_id): return layer_id in self.layers_copper
-    def GetLayerName(self, layer_id): return self.layers_copper.get(layer_id, "Unknown")
-    def FindNet(self, name): return MockNet(1, name)
-    def GetTracks(self): return self.tracks
-    def GetFootprints(self): return self.footprints
-    def GetZones(self): return self.zones
-    def Zones(self): return self.zones
-
-class MockSeq:
-    def __init__(self, items): self.items = items
-    def Seq(self): return self.items
-
-class MockDesignSettings:
-    def GetStackupDescriptor(self): return None # Not implemented in mock yet
-
-class MockNet:
-    def __init__(self, code, name):
-        self.code = code
-        self.name = name
-    def GetNetCode(self): return self.code
-
-class MockTrack(MockPcbnew.PCB_TRACK):
-    def __init__(self, net_code, layer, start, end, width):
-        self.net_code = net_code
-        self.layer = layer
-        self.start = MockPoint(start[0], start[1])
-        self.end = MockPoint(end[0], end[1])
-        self.width = width
-        self.classname = "PCB_TRACK"
-    def GetNetCode(self): return self.net_code
-    def GetLayer(self): return self.layer
-    def GetWidth(self): return self.width
-    def GetStart(self): return self.start
-    def GetEnd(self): return self.end
-    def GetClass(self): return self.classname
-
-class MockPoint:
-    def __init__(self, x, y): self.x, self.y = x, y
-
-from kipida.kicad.extractor import GeometryExtractor
 
 class TestGeometryExtractor(unittest.TestCase):
     def setUp(self):
-        self.board = MockBoard()
+        self.board = FakeBoard()
         self.extractor = GeometryExtractor(self.board, debug=False, log_callback=None)
-        
+        # No live KiCad: use the built-in 2-layer default stackup (F.Cu=0, B.Cu=31)
+        self.extractor._stackup_cache = self.extractor._get_stackup_defaults()
+
     def test_stackup_defaults(self):
         stackup = self.extractor.get_board_stackup()
         self.assertIn('copper', stackup)
-        self.assertIn(0, stackup['copper']) # F_Cu
+        self.assertIn(0, stackup['copper'])  # F.Cu
         self.assertEqual(stackup['copper'][0]['thickness_mm'], 0.035)
 
     def test_track_extraction(self):
-        # 0.5mm width track from 0,0 to 10mm,0
-        w = 500000 # 0.5mm in nm
-        start = (0,0)
-        end = (10000000, 0) # 10mm
-        
-        t = MockTrack(1, 0, start, end, w)
-        self.board.tracks.append(t)
-        
+        # 0.5 mm wide track from (0,0) to (10 mm, 0) on F.Cu
+        self.board.tracks.append(FakeTrack("TestNet", 0, (0, 0), (10_000_000, 0), 500_000))
+
         geo = self.extractor.get_net_geometry("TestNet")
-        
-        self.assertIn(0, geo)
-        poly = geo[0]
-        
-        self.assertAlmostEqual(poly.area, 5.0 + math.pi * (0.25**2), delta=0.01)
+
+        self.assertEqual(list(geo), [0])
+        # Rectangle plus round end caps, widened by the safety buffer on each side
+        half_width = 0.25 + TRACK_SAFETY_BUFFER_MM
+        expected = 10 * (2 * half_width) + math.pi * half_width ** 2
+        self.assertAlmostEqual(geo[0].area, expected, delta=0.01)
+
+    def test_other_nets_ignored(self):
+        self.board.tracks.append(FakeTrack("OtherNet", 0, (0, 0), (10_000_000, 0), 500_000))
+        self.assertEqual(self.extractor.get_net_geometry("TestNet"), {})
+
 
 if __name__ == '__main__':
     unittest.main()

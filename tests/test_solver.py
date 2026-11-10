@@ -5,7 +5,7 @@ import os
 
 # Inject Mock modules to run this standalone (without KiCad) if needed
 # But for Solver, we mostly need numpy/scipy, which we assume are available in the env we run.
-# The solver doesn't depend on pcbnew directly, only the Mesh object structure.
+# The solver doesn't depend on KiCad at all, only on the Mesh object structure.
 
 class MockMesh:
     def __init__(self):

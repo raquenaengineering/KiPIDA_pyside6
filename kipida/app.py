@@ -1,5 +1,4 @@
-"""Application bootstrap: connect to KiCad over IPC and launch the main dialog."""
-import wx
+"""Application bootstrap: connect to KiCad over IPC and launch the main window."""
 import sys
 import os
 import logging
@@ -7,7 +6,10 @@ import tempfile
 import kipy
 import kipy.board
 
-from kipida.ui.main_dialog import KiPIDA_MainDialog
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication, QMessageBox
+
+from kipida.ui.main_window import MainWindow
 from kipida.version import get_full_version
 
 def main():
@@ -109,36 +111,35 @@ def main():
         import traceback
         early_log(traceback.format_exc())
         
-    # 2. Initialize wx App
-    app = wx.App()
-    
-    # 3. Create and Show Dialog
+    # 2. Initialize the Qt application
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setApplicationName("Ki-PIDA")
+    app.setApplicationVersion(get_full_version())
+    icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "kipida.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
+    # 3. Create and show the main window
     try:
-        dlg = KiPIDA_MainDialog(None, board_adapter=board, project=project) 
+        window = MainWindow(board_adapter=board, project=project)
     except Exception as e:
-        early_log(f"CRITICAL: Failed to create KiPIDA_MainDialog: {e}")
+        early_log(f"CRITICAL: Failed to create MainWindow: {e}")
         import traceback
         early_log(traceback.format_exc())
-        # Show a simple message box if possible
-        dlg_err = wx.MessageDialog(None, f"Failed to start Ki-PIDA: {e}\n\nCheck logs for details.", "Startup Error", wx.OK | wx.ICON_ERROR)
-        dlg_err.ShowModal()
-        dlg_err.Destroy()
+        QMessageBox.critical(None, "Startup Error", f"Failed to start Ki-PIDA: {e}\n\nCheck logs for details.")
         return
-    
+
     # Pass initial logs to UI
     for msg in initial_logs:
-        dlg.log(f"[INIT] {msg}")
-    
+        window.log(f"[INIT] {msg}")
+
+    window.show()
     try:
-        dlg.ShowModal()
+        app.exec()
     except Exception as e:
         logger.error(f"Runtime error: {e}")
         import traceback
         traceback.print_exc()
-    finally:
-        dlg.Destroy()
-        
-    app.MainLoop()
 
 if __name__ == "__main__":
     main()

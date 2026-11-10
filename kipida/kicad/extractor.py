@@ -23,6 +23,10 @@ except ImportError:
 def to_mm(val_nm):
     return val_nm / 1e6
 
+# Tracks and vias are widened by this much on each side so that thin copper
+# still covers mesh grid points.
+TRACK_SAFETY_BUFFER_MM = 0.05
+
 class GeometryExtractor:
     def __init__(self, board, debug=False, log_callback=None):
         self.board = board
@@ -269,10 +273,9 @@ class GeometryExtractor:
         # 1. Process Tracks
         tracks = self._get_board_items('tracks')
         
-        # We might want to buffer tracks slightly more than half-width to ensure 
-        # grid points are caught if the track is very thin.
-        # A safety buffer of 0.1mm helps catch grid nodes.
-        safety_buffer = 0.05 
+        # Buffer tracks slightly more than half-width so grid points are
+        # caught even if the track is very thin.
+        safety_buffer = TRACK_SAFETY_BUFFER_MM
         
         for track in tracks:
             net = self._get_val(track, 'net')

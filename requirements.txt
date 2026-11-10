@@ -10,5 +10,3 @@ matplotlib
 kicad-python>=0.7.0
 pypardiso
 PySide6-Essentials~=6.12.0
-# Transitional: current UI is wxPython. Remove once the PySide6 port lands.
-wxPython

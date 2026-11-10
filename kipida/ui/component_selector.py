@@ -1,180 +1,157 @@
-﻿import wx
+﻿from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QMessageBox, QVBoxLayout,
+)
 
-class ComponentSelectorDialog(wx.Dialog):
+
+def pad_name(pad) -> str:
+    """Pad number/name of a kipy pad object."""
+    return str(getattr(pad, 'number', getattr(pad, 'name', '')) or '')
+
+
+class ComponentSelectorDialog(QDialog):
+    """Pick a component on a net (and its pads) to act as a source or load."""
+
     def __init__(self, parent, title, net_name, components):
-        super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        super().__init__(parent)
+        self.setWindowTitle(title)
         self.net_name = net_name
-        self.components = components
+        self.components = components  # { ref_des: [pad_objs] }
         self.mode = "LOAD"
-        
-        self.selected_ref = None
-        self.selected_value = 0.0
-        self.selected_pads = []
-        
+
         self._init_ui()
-        self.SetSize((400, 500))
-        self.Center()
-        
+        self.resize(400, 500)
+
+    def _init_ui(self):
+        vbox = QVBoxLayout(self)
+
+        self.lbl_instruction = QLabel("Select Component:")
+        vbox.addWidget(self.lbl_instruction)
+
+        self.lst_comps = QListWidget()
+        self.lst_comps.setSortingEnabled(True)
+        self.comp_map = {}
+        if isinstance(self.components, dict):
+            for ref, pads in self.components.items():
+                self.lst_comps.addItem(ref)
+                self.comp_map[ref] = pads
+        else:  # legacy: list of objects
+            for c in self.components:
+                ref = getattr(c, 'ref_des', str(c))
+                self.lst_comps.addItem(ref)
+                self.comp_map[ref] = c
+        vbox.addWidget(self.lst_comps, 2)
+
+        h_val = QHBoxLayout()
+        self.lbl_val = QLabel("Value:")
+        self.txt_val = QLineEdit()
+        h_val.addWidget(self.lbl_val)
+        h_val.addWidget(self.txt_val, 1)
+        vbox.addLayout(h_val)
+
+        vbox.addWidget(QLabel("Select Pads:"))
+        self.chk_all_pads = QCheckBox("Use all connected pads")
+        self.chk_all_pads.setChecked(True)
+        vbox.addWidget(self.chk_all_pads)
+
+        self.pad_list = QListWidget()
+        self.pad_list.setEnabled(False)  # enabled when "use all" is unchecked
+        vbox.addWidget(self.pad_list, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._on_ok)
+        buttons.rejected.connect(self.reject)
+        vbox.addWidget(buttons)
+
+        self.lst_comps.currentRowChanged.connect(self.on_select)
+        self.lst_comps.itemDoubleClicked.connect(lambda _item: self._on_ok())
+        self.chk_all_pads.toggled.connect(lambda use_all: self.pad_list.setEnabled(not use_all))
+
     def set_mode(self, mode):
         self.mode = mode
         if mode == "SOURCE":
-            self.lbl_instruction.SetLabel("Select Component to use as Voltage Source:")
-            # Hide value input for sources (voltage is set at rail level)
-            self.lbl_val.Hide()
-            self.txt_val.Hide()
+            self.lbl_instruction.setText("Select Component to use as Voltage Source:")
+            # Voltage is set at rail level
+            self.lbl_val.hide()
+            self.txt_val.hide()
         else:
-            self.lbl_instruction.SetLabel("Select Component to use as Load:")
-            self.lbl_val.SetLabel("Current (A):")
-            self.txt_val.SetValue("1.0")
-            self.lbl_val.Show()
-            self.txt_val.Show()
-            
-    def _init_ui(self):
-        panel = wx.Panel(self)
-        vbox = wx.BoxSizer(wx.VERTICAL)
-        
-        self.lbl_instruction = wx.StaticText(panel, label="Select Component:")
-        vbox.Add(self.lbl_instruction, 0, wx.ALL, 5)
-        
-        self.lst_comps = wx.ListBox(panel, style=wx.LB_SINGLE | wx.LB_SORT)
-        self.comp_map = {}
-        
-        # self.components is a dict { ref: [pad_objs] }
-        if isinstance(self.components, dict):
-             for ref, pads in self.components.items():
-                 self.lst_comps.Append(ref)
-                 self.comp_map[ref] = pads
-        else:
-             # Fallback for list of objects (legacy)
-             for c in self.components:
-                 ref = getattr(c, 'ref_des', str(c))
-                 self.lst_comps.Append(ref)
-                 self.comp_map[ref] = c
-            
-        vbox.Add(self.lst_comps, 1, wx.EXPAND | wx.ALL, 5)
-        
-        h_val = wx.BoxSizer(wx.HORIZONTAL)
-        self.lbl_val = wx.StaticText(panel, label="Value:")
-        self.txt_val = wx.TextCtrl(panel)
-        h_val.Add(self.lbl_val, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
-        h_val.Add(self.txt_val, 1, wx.EXPAND)
-        vbox.Add(h_val, 0, wx.EXPAND | wx.ALL, 5)
-        
-        # Pad selection
-        vbox.Add(wx.StaticText(panel, label="Select Pads:"), 0, wx.ALL, 5)
-        
-        self.chk_all_pads = wx.CheckBox(panel, label="Use all connected pads")
-        self.chk_all_pads.SetValue(True)
-        vbox.Add(self.chk_all_pads, 0, wx.ALL, 5)
-        
-        # Pad list (shown when "use all" is unchecked)
-        self.pad_list = wx.CheckListBox(panel)
-        self.pad_list.Enable(False)  # Disabled until component selected and "use all" unchecked
-        vbox.Add(self.pad_list, 0, wx.EXPAND | wx.ALL, 5)
-        
-        h_btns = wx.BoxSizer(wx.HORIZONTAL)
-        self.btn_ok = wx.Button(panel, wx.ID_OK, "OK")
-        self.btn_cancel = wx.Button(panel, wx.ID_CANCEL, "Cancel")
-        
-        # Helper to make OK default
-        self.btn_ok.SetDefault()
-        
-        h_btns.AddStretchSpacer()
-        h_btns.Add(self.btn_cancel, 0, wx.RIGHT, 10)
-        h_btns.Add(self.btn_ok, 0)
-        
-        vbox.Add(h_btns, 0, wx.EXPAND | wx.ALL, 5)
-        
-        panel.SetSizer(vbox)
-        
-        main_sizer = wx.BoxSizer(wx.VERTICAL)
-        main_sizer.Add(panel, 1, wx.EXPAND)
-        self.SetSizer(main_sizer)
-        
-        self.lst_comps.Bind(wx.EVT_LISTBOX, self.on_select)
-        self.chk_all_pads.Bind(wx.EVT_CHECKBOX, self.on_all_pads_toggle)
-        
-    def on_all_pads_toggle(self, event):
-        """Enable/disable pad list based on checkbox"""
-        use_all = self.chk_all_pads.GetValue()
-        self.pad_list.Enable(not use_all)
-        
-    def on_select(self, event):
-        """Update pad list when component is selected"""
-        sel_idx = self.lst_comps.GetSelection()
-        if sel_idx != wx.NOT_FOUND:
-            ref = self.lst_comps.GetString(sel_idx)
-            comp_data = self.comp_map.get(ref)
-            
-            # Populate pad list
-            self.pad_list.Clear()
-            if isinstance(comp_data, list):
-                for p in comp_data:
-                    p_name = getattr(p, 'number', getattr(p, 'name', ''))
-                    if p_name:
-                        self.pad_list.Append(str(p_name))
-                        self.pad_list.Check(self.pad_list.GetCount() - 1, True)  # Check all by default
-            elif hasattr(comp_data, 'pads'):
-                for p in comp_data.pads:
-                    p_name = getattr(p, 'number', getattr(p, 'name', ''))
-                    if p_name:
-                        self.pad_list.Append(str(p_name))
-                        self.pad_list.Check(self.pad_list.GetCount() - 1, True)
+            self.lbl_instruction.setText("Select Component to use as Load:")
+            self.lbl_val.setText("Current (A):")
+            self.txt_val.setText("1.0")
+            self.lbl_val.show()
+            self.txt_val.show()
 
-    def GetSelection(self):
-        sel_idx = self.lst_comps.GetSelection()
-        if sel_idx != wx.NOT_FOUND:
-            ref = self.lst_comps.GetString(sel_idx)
+    def _selected_ref(self):
+        item = self.lst_comps.currentItem()
+        return item.text() if item else None
+
+    def _pad_names_of(self, ref):
+        comp_data = self.comp_map.get(ref)
+        pads = comp_data if isinstance(comp_data, list) else getattr(comp_data, 'pads', [])
+        return [n for n in (pad_name(p) for p in pads) if n]
+
+    def on_select(self, _row=None):
+        """Refill the pad list for the selected component (all checked)."""
+        self.pad_list.clear()
+        ref = self._selected_ref()
+        if not ref:
+            return
+        for name in self._pad_names_of(ref):
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            self.pad_list.addItem(item)
+
+    def _on_ok(self):
+        if not self._selected_ref():
+            QMessageBox.warning(self, "Validation Error", "Please select a component.")
+            return
+        if self.mode == "LOAD":
             try:
-                val = float(self.txt_val.GetValue()) if self.txt_val.IsShown() else 0.0
-            except:
+                if float(self.txt_val.text()) < 0:
+                    raise ValueError
+            except ValueError:
+                QMessageBox.warning(self, "Validation Error", "Current must be a number (A) >= 0.")
+                return
+        self.accept()
+
+    def get_selection(self):
+        """Returns (ref_des, value, [pad_names])."""
+        ref = self._selected_ref()
+        if not ref:
+            return None, 0.0, []
+
+        # Use mode, not widget visibility: widgets report hidden once the dialog closes
+        val = 0.0
+        if self.mode == "LOAD":
+            try:
+                val = float(self.txt_val.text())
+            except ValueError:
                 val = 0.0
-                
-            pads = []
-            
-            # Check if using all pads or selected pads
-            if self.chk_all_pads.GetValue():
-                # Use all pads
-                comp_data = self.comp_map.get(ref)
-                
-                if isinstance(comp_data, list):
-                    for p in comp_data:
-                        p_name = getattr(p, 'number', getattr(p, 'name', ''))
-                        if p_name:
-                            pads.append(str(p_name))
-                elif hasattr(comp_data, 'pads'):
-                    for p in comp_data.pads:
-                        p_name = getattr(p, 'number', getattr(p, 'name', ''))
-                        if p_name:
-                            pads.append(str(p_name))
-            else:
-                # Use only checked pads
-                for i in range(self.pad_list.GetCount()):
-                    if self.pad_list.IsChecked(i):
-                        pads.append(self.pad_list.GetString(i))
-            
-            return ref, val, pads
-        return None, 0.0, []
+
+        if self.chk_all_pads.isChecked():
+            pads = self._pad_names_of(ref)
+        else:
+            pads = [self.pad_list.item(i).text() for i in range(self.pad_list.count())
+                    if self.pad_list.item(i).checkState() == Qt.CheckState.Checked]
+        return ref, val, pads
 
     def prepopulate(self, ref_des, value, pads):
-        """Pre-set the dialog state for editing"""
-        idx = self.lst_comps.FindString(ref_des)
-        if idx != wx.NOT_FOUND:
-            self.lst_comps.SetSelection(idx)
-            self.on_select(None) # Load pads
-            
-            # Set value
-            if self.mode == "LOAD":
-                self.txt_val.SetValue(str(value))
-            
-            # Set pads
-            all_comp_pads = [self.pad_list.GetString(i) for i in range(self.pad_list.GetCount())]
-            if set(all_comp_pads) == set(pads):
-                self.chk_all_pads.SetValue(True)
-                self.pad_list.Enable(False)
-            else:
-                self.chk_all_pads.SetValue(False)
-                self.pad_list.Enable(True)
-                for i in range(self.pad_list.GetCount()):
-                    p_name = self.pad_list.GetString(i)
-                    self.pad_list.Check(i, p_name in pads)
+        """Pre-set the dialog state for editing."""
+        matches = self.lst_comps.findItems(ref_des, Qt.MatchFlag.MatchExactly)
+        if not matches:
+            return
+        self.lst_comps.setCurrentItem(matches[0])  # triggers on_select -> pad list
+
+        if self.mode == "LOAD":
+            self.txt_val.setText(str(value))
+
+        all_comp_pads = [self.pad_list.item(i).text() for i in range(self.pad_list.count())]
+        if set(all_comp_pads) == set(pads):
+            self.chk_all_pads.setChecked(True)
+        else:
+            self.chk_all_pads.setChecked(False)
+            for i in range(self.pad_list.count()):
+                item = self.pad_list.item(i)
+                item.setCheckState(Qt.CheckState.Checked if item.text() in pads else Qt.CheckState.Unchecked)

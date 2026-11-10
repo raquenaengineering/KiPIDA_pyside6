@@ -114,9 +114,9 @@ kipida/
   app.py               KiCad IPC connection + app bootstrap
   core/                Domain models and config persistence (pure Python)
   kicad/               Board access via kipy: net discovery, geometry extraction
-  simulation/          Resistive mesh generation and sparse DC solver
+  simulation/          Mesh generation, sparse DC solver, multi-rail power-tree solve
   visualization/       Matplotlib plotting
-  ui/                  wxPython dialogs and panels
+  ui/                  PySide6 (Qt) main window, panels and dialogs
 tests/                 pytest suite
 docs/images/           README screenshots
 ```
@@ -139,7 +139,7 @@ The tool utilizes a **Hybrid 2.5D Finite Difference Method (FDM)**. It represent
 
 ### Stack
 - **Languages:** Python 3.11+ (KiCad 10 runs plugins on its bundled Python 3.11)
-- **UI:** wxPython
+- **UI:** PySide6 (Qt 6)
 - **Math:** NumPy & SciPy
 - **Geometry:** Shapely
 

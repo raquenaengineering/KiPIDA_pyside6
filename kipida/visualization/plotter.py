@@ -1,11 +1,11 @@
+"""Matplotlib result plots, rendered to PNG bytes (GUI-toolkit independent)."""
+import io
 
 import matplotlib
-# Use Agg backend to avoid GUI requirement for matplotlib, since we just want images
+# Agg backend: render off-screen, the UI only displays the resulting PNG
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-import io
-import wx
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers the 3d projection)
 import numpy as np
 
 class Plotter:
@@ -15,7 +15,7 @@ class Plotter:
     def plot_3d_mesh(self, mesh, stackup=None, vmin=None, vmax=None):
         """
         Generates a 3D scatter plot of the mesh nodes.
-        Returns a wx.Bitmap.
+        Returns PNG image bytes, or None.
         """
         try:
             fig = plt.figure(figsize=(7, 5), constrained_layout=True)
@@ -61,7 +61,7 @@ class Plotter:
             ax.set_xlim3d([x_mid - max_range/2, x_mid + max_range/2])
             ax.set_ylim3d([y_mid - max_range/2, y_mid + max_range/2])
             
-            return self._fig_to_bitmap(fig)
+            return self._fig_to_png(fig)
         except Exception as e:
             if self.debug: print(f"Plotter 3D Error: {e}")
             return None
@@ -69,7 +69,7 @@ class Plotter:
     def plot_layer_2d(self, mesh, layer_id, stackup=None, vmin=None, vmax=None, layer_name=None):
         """
         Generates a 2D plot (heatmap) for a specific layer.
-        Returns a wx.Bitmap.
+        Returns PNG image bytes, or None.
         """
         try:
             fig, ax = plt.subplots(figsize=(7, 5), constrained_layout=True)
@@ -116,16 +116,14 @@ class Plotter:
             ax.set_ylabel('Y (mm)')
             ax.set_aspect('equal', 'box')
             
-            return self._fig_to_bitmap(fig)
+            return self._fig_to_png(fig)
 
         except Exception as e:
             if self.debug: print(f"Plotter 2D Error: {e}")
             return None
 
-    def _fig_to_bitmap(self, fig):
+    def _fig_to_png(self, fig) -> bytes:
         buf = io.BytesIO()
         fig.savefig(buf, format='png', dpi=100)
         plt.close(fig)
-        buf.seek(0)
-        image = wx.Image(buf, wx.BITMAP_TYPE_PNG)
-        return wx.Bitmap(image)
+        return buf.getvalue()
