@@ -1,6 +1,7 @@
 
 import sys
 import math
+from itertools import repeat
 
 from kipida.kicad.padstack import copper_diameter_mm, copper_size_mm, drill_diameter_mm
 
@@ -31,6 +32,16 @@ def copper_mask(geometry, xv, yv):
     return shapely.contains_xy(region, xv, yv)
 
 class Mesh:
+    """Resistive mesh: nodes on a regular grid per layer, plus the conductance
+    matrix in COO form.
+
+    The matrix entries are stored as NumPy array blocks (one block per batch of
+    edges) instead of Python lists of numbers: a large net has tens of millions
+    of entries, and as individual Python objects they cost gigabytes and most of
+    the meshing time. G_coo_row / G_coo_col / G_coo_data return the entries as
+    arrays, in the same order the edges were added.
+    """
+
     def __init__(self):
         self.nodes = [] # List of node_ids (integers)
         self.node_coords = {} # { node_id: (x_mm, y_mm, layer_id) }
@@ -38,34 +49,44 @@ class Mesh:
         self.node_map = {} # { (x_idx, y_idx, layer_id): node_id }
         self.grid_origin = (0, 0)
         self.grid_step = 0
-        
-        # New sparse matrix components
-        self.G_coo_data = [] # [g, g, -g, -g, ...]
-        self.G_coo_row = []
-        self.G_coo_col = []
+
+        # Sparse matrix entries, as blocks of arrays
+        self._rows, self._cols, self._data = [], [], []
         self.G_final_csr = None # To be filled by solver or mesher if configured
-        
+
+    def add_edges(self, u, v, g):
+        """Add conductance g between node arrays u[i] and v[i] (g: scalar or array).
+
+        Stamps G[u,u] += g, G[v,v] += g, G[u,v] -= g, G[v,u] -= g for every pair.
+        """
+        u = np.asarray(u, dtype=np.int64).ravel()
+        v = np.asarray(v, dtype=np.int64).ravel()
+        if u.size == 0:
+            return
+        g = np.broadcast_to(np.asarray(g, dtype=np.float64), u.shape)
+        self._rows.append(np.concatenate([u, v, u, v]))
+        self._cols.append(np.concatenate([u, v, v, u]))
+        self._data.append(np.concatenate([g, g, -g, -g]))
+
     def add_edge_direct(self, u, v, g):
-        """Adds an edge directly to the sparse data arrays."""
-        # G[u,u] += g
-        self.G_coo_row.append(u)
-        self.G_coo_col.append(u)
-        self.G_coo_data.append(g)
-        
-        # G[v,v] += g
-        self.G_coo_row.append(v)
-        self.G_coo_col.append(v)
-        self.G_coo_data.append(g)
-        
-        # G[u,v] -= g
-        self.G_coo_row.append(u)
-        self.G_coo_col.append(v)
-        self.G_coo_data.append(-g)
-        
-        # G[v,u] -= g
-        self.G_coo_row.append(v)
-        self.G_coo_col.append(u)
-        self.G_coo_data.append(-g)
+        """Add a single edge (vias, through-hole pads)."""
+        self.add_edges([u], [v], g)
+
+    @staticmethod
+    def _joined(blocks, dtype):
+        return np.concatenate(blocks) if blocks else np.empty(0, dtype=dtype)
+
+    @property
+    def G_coo_row(self):
+        return self._joined(self._rows, np.int64)
+
+    @property
+    def G_coo_col(self):
+        return self._joined(self._cols, np.int64)
+
+    @property
+    def G_coo_data(self):
+        return self._joined(self._data, np.float64)
 
 class Mesher:
     def __init__(self, board, debug=False, log_callback=None):
@@ -182,23 +203,16 @@ class Mesher:
                 new_ids = np.arange(node_counter, node_counter + count_on_layer)
                 node_grid[layer_map[lid], y_idxs, x_idxs] = new_ids
                 
-                # Save to mesh.nodes and mesh.node_coords
-                
-                # For `mesh.nodes` (list of ints)
-                mesh.nodes.extend(new_ids)
+                # Node tables, built in bulk (plain Python ints/floats, no per-node loop)
+                ids = new_ids.tolist()
+                xs, ys = x_idxs.tolist(), y_idxs.tolist()
+                layer = int(lid)
+                mesh.nodes.extend(ids)
+                mesh.node_map.update(zip(zip(xs, ys, repeat(layer)), ids))
+                mesh.node_coords.update(zip(ids, zip((min_x + x_idxs * grid_size_mm).tolist(),
+                                                     (min_y + y_idxs * grid_size_mm).tolist(),
+                                                     repeat(layer))))
 
-                
-                for i in range(count_on_layer):
-                    nid = new_ids[i]
-                    xi = x_idxs[i]
-                    yi = y_idxs[i]
-                    mesh.node_map[(xi, yi, lid)] = nid
-                    mesh.node_coords[nid] = (
-                        min_x + xi * grid_size_mm,
-                        min_y + yi * grid_size_mm,
-                        lid
-                    )
-                
                 node_counter += count_on_layer
                 
                 # 4. Generate Lateral Edges (Vectorized)
@@ -222,9 +236,7 @@ class Mesher:
                     u_ids = node_grid[layer_map[lid], y_r, x_r]
                     # Nodes at (y, x+1)
                     v_ids = node_grid[layer_map[lid], y_r, x_r + 1]
-                    
-                    for u, v in zip(u_ids, v_ids):
-                         mesh.add_edge_direct(u, v, g_lat_val)
+                    mesh.add_edges(u_ids, v_ids, g_lat_val)
                 
                 # Vertical (Top) Neighbors (x, y) <-> (x, y+1)
                 top_mask = mask_2d[:-1, :] & mask_2d[1:, :]
@@ -234,9 +246,7 @@ class Mesher:
                     u_ids = node_grid[layer_map[lid], y_t, x_t]
                     # Nodes at (y+1, x)
                     v_ids = node_grid[layer_map[lid], y_t + 1, x_t]
-                    
-                    for u, v in zip(u_ids, v_ids):
-                         mesh.add_edge_direct(u, v, g_lat_val)
+                    mesh.add_edges(u_ids, v_ids, g_lat_val)
 
             if self.debug:
                 self._log(f"  Layer {lid} vectorized mesh: {count_on_layer} nodes.")
@@ -294,33 +304,6 @@ class Mesher:
                                                     search_diameter=max(pad_mm or 0.0, drill_mm or 0.0))
 
         return mesh
-
-    def _bulk_add_edges(self, mesh, u_ids, v_ids, g):
-        """Adds multiple edges at once to sparse arrays."""
-        # This is where we gain massive speed in construction
-        n = len(u_ids)
-        # We need to replicate g for all edges
-        gs = np.full(n, g)
-        neg_gs = np.full(n, -g)
-        
-        # Prepare arrays
-        rows = []
-        cols = []
-        data = []
-        
-        # u,u
-        rows.append(u_ids); cols.append(u_ids); data.append(gs)
-        # v,v
-        rows.append(v_ids); cols.append(v_ids); data.append(gs)
-        # u,v
-        rows.append(u_ids); cols.append(v_ids); data.append(neg_gs)
-        # v,u
-        rows.append(v_ids); cols.append(u_ids); data.append(neg_gs)
-        
-        # Concatenate and extend
-        mesh.G_coo_row.extend(np.concatenate(rows))
-        mesh.G_coo_col.extend(np.concatenate(cols))
-        mesh.G_coo_data.extend(np.concatenate(data))
 
     def _calculate_vertical_g(self, layer_a, layer_b, stackup, diameter_mm):
         """Conductance of a plated barrel between two layers. diameter_mm: drill diameter."""

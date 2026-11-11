@@ -359,6 +359,26 @@ class TestCursorReadout(unittest.TestCase):
         view.close()
 
 
+class TestEstimateLabel(unittest.TestCase):
+    def test_label_before_and_after_calibration(self):
+        from kipida.simulation.estimate import Calibration
+        from kipida.ui.main_window import MainWindow
+        win = MainWindow(board_adapter=None, project=None)
+        try:
+            self.assertIn("run once to calibrate", win.lbl_estimate.text())
+            win.calibration = Calibration(grid_mm=0.1, rails={"A": (200_000, {"geometry": 0.2, "mesh": 0.4,
+                                                                               "setup": 0.2, "solve": 1.0})},
+                                          plots_s=1.0, overhead_s=2.0, wall_s=4.8)
+            win.spin_grid_size.setValue(0.1)
+            win._update_estimate()
+            self.assertEqual(win.lbl_estimate.text(), "Estimated: ~5 s")
+            # 16x the nodes: 2.0 overhead + 11.5 plots + 0.4 fixed + 4.9 mesh + 14.2 solve = 33.0 s
+            win.spin_grid_size.setValue(0.025)   # label follows the spin box
+            self.assertEqual(win.lbl_estimate.text(), "Estimated: ~35 s")
+        finally:
+            win.close()
+
+
 class TestMainWindow(unittest.TestCase):
     def test_build_and_show_rails(self):
         from kipida.ui.main_window import MainWindow

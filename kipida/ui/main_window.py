@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from kipida.simulation.estimate import Calibration, estimate_seconds, format_duration
 from kipida.simulation.process import run_simulation
 from kipida.simulation.system import PowerTreeCycleError, format_timings
 from kipida.ui.power_tree_panel import PowerTreePanel
@@ -139,6 +140,8 @@ class MainWindow(QMainWindow):
         self.rail_views = []  # RailResultsWidget per solved rail
         self._worker = None
         self.simulation_target = None  # None = simulation.process.run_simulation (tests may replace)
+        self.calibration = None        # timing model from the last completed run (see simulation.estimate)
+        self._run_grid_mm = None
 
         # Live elapsed-time display while a simulation runs
         self._run_clock = QElapsedTimer()
@@ -235,6 +238,9 @@ class MainWindow(QMainWindow):
         # Bottom buttons
         btns = QHBoxLayout()
         btns.addStretch(1)
+        self.lbl_estimate = QLabel()
+        btns.addWidget(self.lbl_estimate)
+        btns.addSpacing(8)
         self.btn_run = QPushButton("Run Simulation")
         self.btn_run.setToolTip("Run the simulation (R)")
         self.btn_stop = QPushButton("Stop")
@@ -245,6 +251,9 @@ class MainWindow(QMainWindow):
         btns.addWidget(self.btn_stop)
         btns.addWidget(self.btn_close)
         main.addLayout(btns)
+
+        self.spin_grid_size.valueChanged.connect(self._update_estimate)
+        self._update_estimate()
 
         self.btn_run.clicked.connect(self.on_run)
         self.btn_stop.clicked.connect(self.on_stop)
@@ -366,7 +375,8 @@ class MainWindow(QMainWindow):
         self.log(f"--- Starting System Simulation ({len(rails)} rails) ---")
         self._set_busy(True)
 
-        self._worker = SimulationWorker(rails, self.spin_grid_size.value(), self.chk_debug.isChecked(),
+        self._run_grid_mm = self.spin_grid_size.value()
+        self._worker = SimulationWorker(rails, self._run_grid_mm, self.chk_debug.isChecked(),
                                         target=self.simulation_target, parent=self)
         self._worker.log_message.connect(self.log)
         self._worker.succeeded.connect(self._on_sim_succeeded)
@@ -404,6 +414,25 @@ class MainWindow(QMainWindow):
         summary = f"Simulation {result.elapsed_s:.2f} s | plots {plot_s:.2f} s | total {total_s:.2f} s"
         self.lbl_timing.setText(summary)
         self.log(summary)
+
+        # Re-calibrate the time estimate from this run (only completed runs count)
+        if result.rails:
+            self.calibration = Calibration.from_run(result, self._run_grid_mm, total_s, plot_s)
+            self._update_estimate()
+
+    def _update_estimate(self):
+        """Expected run time at the current Mesh Resolution, from the last completed run."""
+        if self.calibration is None:
+            self.lbl_estimate.setText("Estimate: run once to calibrate")
+            self.lbl_estimate.setToolTip("The run-time estimate is calibrated from a completed simulation.")
+            return
+        grid = self.spin_grid_size.value()
+        secs = estimate_seconds(self.calibration, grid)
+        self.lbl_estimate.setText(f"Estimated: {format_duration(secs)}")
+        self.lbl_estimate.setToolTip(
+            f"Expected time at {grid:.3f} mm, scaled from the last run "
+            f"({self.calibration.grid_mm:.3f} mm, {self.calibration.wall_s:.1f} s). "
+            "Assumes the same board and power tree.")
 
     def _on_sim_failed(self, exc, tb):
         self.lbl_timing.setText(f"Failed after {self._run_clock.elapsed() / 1000.0:.2f} s")

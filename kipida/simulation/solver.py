@@ -72,23 +72,15 @@ class Solver:
         idx_to_id = { i: nid for i, nid in enumerate(nodes) }
         
         # 2. Build Matrix G
-        if hasattr(mesh, 'G_coo_data') and len(mesh.G_coo_data) > 0:
+        # Mesher meshes provide the entries as arrays; fetch each once (they are
+        # joined from blocks on access). Node IDs from the Mesher are 0..N-1.
+        data = np.asarray(getattr(mesh, 'G_coo_data', []))
+        if len(data) > 0:
             if self.debug:
-                self._log(f"Using pre-computed sparse matrix ({len(mesh.G_coo_data)} entries).")
-            # We have raw node IDs in G_coo_row/col, need to map to indices 0..N-1
-            # Optimally, Mesher should produce 0..N indices, but it deals with arbitrary node IDs.
-            # If node IDs are 0..N-1 sequential (which they are in Mesher implementation), we can skip mapping?
-            # Let's verify: Mesher.generate_mesh starts node_counter=0 and increments.
-            # So if mesh.nodes is sorted 0..N-1, id_to_idx is identity.
-            
-            # Check if mapping is needed (heuristic: if max node id < N, probably okay, but safer to map)
-            # Vectorized mapping using numpy is fast.
-            
-            # Convert to numpy arrays if not already
-            row_ids = np.array(mesh.G_coo_row)
-            col_ids = np.array(mesh.G_coo_col)
-            data = np.array(mesh.G_coo_data)
-            
+                self._log(f"Using pre-computed sparse matrix ({len(data)} entries).")
+            row_ids = np.asarray(mesh.G_coo_row)
+            col_ids = np.asarray(mesh.G_coo_col)
+
             # Check if simple identity mapping checks out
             # Mesher logic guarantees 0...N-1 sequentially.
             # But let's be robust:
