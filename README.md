@@ -101,7 +101,7 @@ Once "Simulation Success" appears, the UI will jump to the **Results** tab.
   | Key | Action |
   |---|---|
   | `1` – `9` | Show rail 1–9 (tabs are numbered), keeping the same view (e.g. F.Cu) |
-  | `←` / `→` | Previous / next view of the rail (3D, then each layer), wrapping around |
+  | `←` / `→` | Previous / next view of the rail (3D, then each layer); stops at the first / last view |
   | `C` | Fit the board to the canvas (2D and 3D) |
   | `F` | Toggle full screen; `Esc` also leaves full screen |
 - **Board outline:** The Edge.Cuts outline is drawn on every view as a position reference, and the 2D maps open framed on the whole board.

@@ -1,3 +1,5 @@
+import multiprocessing
+import queue
 import sys
 import time
 import traceback
@@ -10,9 +12,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from kipida.simulation.system import PowerTreeCycleError, SystemSimulator, format_timings
+from kipida.simulation.process import run_simulation
+from kipida.simulation.system import PowerTreeCycleError, format_timings
 from kipida.ui.power_tree_panel import PowerTreePanel
-from kipida.ui.results_view import RailResultsWidget
+from kipida.ui.results_view import RAIL_TAB_COLOR, RailResultsWidget, highlight_active_tab
 from kipida.version import get_full_version, get_window_title
 
 
@@ -31,25 +34,91 @@ class _StreamToLog:
 
 
 class SimulationWorker(QThread):
-    """Runs SystemSimulator off the GUI thread so the window stays responsive."""
+    """Runs the simulation in a separate process and relays its messages.
+
+    The process can be killed at any moment with stop(), even in the middle of
+    meshing or the sparse solve (a thread could not be stopped safely). This
+    QThread only waits on the process's message queue, so the window stays
+    responsive.
+    """
 
     log_message = Signal(str)
-    succeeded = Signal(object)          # SystemResult
+    succeeded = Signal(object)          # SystemResult (slimmed, see simulation.process)
     failed = Signal(object, str)        # exception, formatted traceback
+    cancelled = Signal()
 
-    def __init__(self, board, rails, grid_size_mm, debug, parent=None):
+    def __init__(self, rails, grid_size_mm, debug, target=None, parent=None):
         super().__init__(parent)
-        self.board = board
         self.rails = rails
         self.grid_size_mm = grid_size_mm
         self.debug = debug
+        self.target = target or run_simulation  # replaceable in tests
+        self._process = None
+        self._stop_requested = False
+
+    def stop(self):
+        """Kill the simulation process now. Safe to call from the GUI thread."""
+        self._stop_requested = True
+        proc = self._process
+        if proc is not None and proc.is_alive():
+            proc.kill()
 
     def run(self):
+        ctx = multiprocessing.get_context("spawn")  # never fork a Qt process
+        q = ctx.Queue()
+        self._process = ctx.Process(target=self.target, args=(q, self.rails, self.grid_size_mm, self.debug),
+                                    name="kipida-simulation", daemon=True)
+        finished = False
         try:
-            sim = SystemSimulator(self.board, debug=self.debug, log_callback=self.log_message.emit)
-            self.succeeded.emit(sim.run(self.rails, grid_size_mm=self.grid_size_mm))
-        except Exception as e:  # reported to the GUI thread
-            self.failed.emit(e, traceback.format_exc())
+            self._process.start()
+            if self._stop_requested:  # Stop pressed while the process was starting
+                self._process.kill()
+            while not finished:
+                try:
+                    msg = q.get(timeout=0.1)
+                except queue.Empty:
+                    if self._stop_requested or not self._process.is_alive():
+                        # Pick up anything sent just before the process ended
+                        try:
+                            msg = q.get(timeout=0.5)
+                        except queue.Empty:
+                            break
+                    else:
+                        continue
+                finished = self._handle(msg)
+        except Exception as e:  # e.g. the process could not be started
+            if not self._stop_requested:
+                self.failed.emit(e, traceback.format_exc())
+            finished = True
+        finally:
+            if self._process.is_alive():
+                self._process.kill()
+            self._process.join(timeout=5)
+            exitcode = self._process.exitcode
+            q.close()
+            q.cancel_join_thread()  # do not block on unread data from a killed process
+
+        if self._stop_requested:
+            self.cancelled.emit()
+        elif not finished:
+            self.failed.emit(RuntimeError(f"The simulation process ended unexpectedly (exit code {exitcode}). "
+                                          "This can happen when it runs out of memory, e.g. on a very fine mesh."), "")
+
+    def _handle(self, msg):
+        """Process one queue message. Returns True when the run is over."""
+        kind = msg[0]
+        if kind == "log":
+            self.log_message.emit(msg[1])
+            return False
+        if self._stop_requested:  # a result arriving after Stop is discarded
+            return True
+        if kind == "result":
+            self.succeeded.emit(msg[1])
+        elif kind == "error":
+            _kind, err_type, text, tb = msg
+            exc = PowerTreeCycleError(text) if err_type == "cycle" else RuntimeError(f"{err_type}: {text}")
+            self.failed.emit(exc, tb)
+        return True
 
 
 class MainWindow(QMainWindow):
@@ -69,6 +138,7 @@ class MainWindow(QMainWindow):
         self.system_result = None
         self.rail_views = []  # RailResultsWidget per solved rail
         self._worker = None
+        self.simulation_target = None  # None = simulation.process.run_simulation (tests may replace)
 
         # Live elapsed-time display while a simulation runs
         self._run_clock = QElapsedTimer()
@@ -144,6 +214,7 @@ class MainWindow(QMainWindow):
         self.result_text = QPlainTextEdit()
         self.result_text.setReadOnly(True)
         self.results_tabs = QTabWidget()
+        highlight_active_tab(self.results_tabs, RAIL_TAB_COLOR)
         self.result_splitter.addWidget(self.result_text)
         self.result_splitter.addWidget(self.results_tabs)
         self.result_splitter.setSizes([100, 500])
@@ -151,7 +222,7 @@ class MainWindow(QMainWindow):
         rv = QVBoxLayout(results_page)
         rv.setContentsMargins(0, 0, 0, 0)
         rv.addWidget(self.result_splitter, 1)
-        hint = QLabel("Keys:  1-9 rail   |   ← / → view   |   C fit to canvas   |   F full screen (Esc to leave)")
+        hint = QLabel("Keys:  R run   |   P stop   |   1-9 rail   |   ← / → view   |   C fit to canvas   |   F full screen (Esc to leave)")
         hint.setEnabled(False)  # greyed-out hint text
         rv.addWidget(hint)
         self.tabs.addTab(results_page, "Results")
@@ -165,12 +236,18 @@ class MainWindow(QMainWindow):
         btns = QHBoxLayout()
         btns.addStretch(1)
         self.btn_run = QPushButton("Run Simulation")
+        self.btn_run.setToolTip("Run the simulation (R)")
+        self.btn_stop = QPushButton("Stop")
+        self.btn_stop.setToolTip("Stop the running simulation immediately (P)")
+        self.btn_stop.setEnabled(False)
         self.btn_close = QPushButton("Close")
         btns.addWidget(self.btn_run)
+        btns.addWidget(self.btn_stop)
         btns.addWidget(self.btn_close)
         main.addLayout(btns)
 
         self.btn_run.clicked.connect(self.on_run)
+        self.btn_stop.clicked.connect(self.on_stop)
         self.btn_close.clicked.connect(self.close)
 
         self.lbl_timing = QLabel("")
@@ -201,6 +278,13 @@ class MainWindow(QMainWindow):
         # Esc leaves full screen from anywhere
         esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         esc.activated.connect(lambda: self.isFullScreen() and self.showNormal())
+
+        # Run / stop from any tab. Text fields keep these keys while typing
+        # (Qt gives a focused line edit priority over single-letter shortcuts).
+        run = QShortcut(QKeySequence(Qt.Key.Key_R), self)
+        run.activated.connect(lambda: self.btn_run.isEnabled() and self.on_run())
+        stop = QShortcut(QKeySequence(Qt.Key.Key_P), self)
+        stop.activated.connect(lambda: self.btn_stop.isEnabled() and self.on_stop())
 
         self.tabs.currentChanged.connect(self._update_shortcuts_enabled)
         self._update_shortcuts_enabled(self.tabs.currentIndex())
@@ -257,6 +341,7 @@ class MainWindow(QMainWindow):
 
     def _set_busy(self, busy):
         self.btn_run.setEnabled(not busy)
+        self.btn_stop.setEnabled(busy)
         self.power_tree.setEnabled(not busy)  # rails must not change mid-solve
         if busy:
             self._run_clock.start()
@@ -281,12 +366,28 @@ class MainWindow(QMainWindow):
         self.log(f"--- Starting System Simulation ({len(rails)} rails) ---")
         self._set_busy(True)
 
-        self._worker = SimulationWorker(self.board, rails, self.spin_grid_size.value(), self.chk_debug.isChecked(), self)
+        self._worker = SimulationWorker(rails, self.spin_grid_size.value(), self.chk_debug.isChecked(),
+                                        target=self.simulation_target, parent=self)
         self._worker.log_message.connect(self.log)
         self._worker.succeeded.connect(self._on_sim_succeeded)
         self._worker.failed.connect(self._on_sim_failed)
+        self._worker.cancelled.connect(self._on_sim_cancelled)
         self._worker.finished.connect(self._on_worker_finished)
         self._worker.start()
+
+    def is_simulating(self):
+        return self._worker is not None and self._worker.isRunning()
+
+    def on_stop(self):
+        if self.is_simulating():
+            self.log("Stopping simulation...")
+            self.btn_stop.setEnabled(False)
+            self._worker.stop()
+
+    def _on_sim_cancelled(self):
+        secs = self._run_clock.elapsed() / 1000.0
+        self.lbl_timing.setText(f"Stopped after {secs:.2f} s")
+        self.log(f"--- Simulation stopped by the user after {secs:.2f} s ---")
 
     def _on_sim_succeeded(self, result):
         self.system_result = result
@@ -360,9 +461,17 @@ class MainWindow(QMainWindow):
     # -- lifecycle ----------------------------------------------------------
 
     def closeEvent(self, event):
-        if self._worker is not None and self._worker.isRunning():
-            QMessageBox.information(self, "Ki-PIDA", "A simulation is still running. Please wait for it to finish.")
-            event.ignore()
-            return
+        if self.is_simulating():
+            answer = QMessageBox.question(
+                self, "Simulation running",
+                "A simulation is still running.\n\nStop it and close Ki-PIDA?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            worker = self._worker
+            worker.stop()        # kills the simulation process
+            worker.wait(10000)   # the relay thread exits as soon as the process is gone
         sys.stdout, sys.stderr = self._orig_stdout, self._orig_stderr
         super().closeEvent(event)

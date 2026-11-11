@@ -10,6 +10,26 @@ from kipida.visualization.layer_grid import LayerGrid, mesh_to_layer_grids
 pg.setConfigOptions(imageAxisOrder="col-major", antialias=False)
 
 COLORMAP_NAME = "viridis"
+
+# Tab bars in the Results tab: the selected tab gets a strong colour so it is
+# obvious which rail (red) and which view (blue) is shown.
+_TAB_STYLE = """
+QTabBar::tab {{
+    background: #ececec; color: #202020;
+    border: 1px solid #c4c4c4; border-bottom: none;
+    border-top-left-radius: 4px; border-top-right-radius: 4px;
+    padding: 4px 12px; margin-right: 2px;
+}}
+QTabBar::tab:hover:!selected {{ background: #dcdcdc; }}
+QTabBar::tab:selected {{ background: {color}; color: white; border-color: {color}; font-weight: bold; }}
+"""
+RAIL_TAB_COLOR = "#c62828"  # red: active rail (bus)
+VIEW_TAB_COLOR = "#1565c0"  # blue: active view (3D / layer)
+
+
+def highlight_active_tab(tab_widget, color):
+    """Give the selected tab of a QTabWidget a solid background colour."""
+    tab_widget.tabBar().setStyleSheet(_TAB_STYLE.format(color=color))
 OUTLINE_COLOR = (230, 230, 230)  # board outline: light grey, readable over viridis and black
 
 
@@ -346,6 +366,7 @@ class RailResultsWidget(QTabWidget):
 
     def __init__(self, rail_result, stackup, drop_pct, board_outline=None, parent=None):
         super().__init__(parent)
+        highlight_active_tab(self, VIEW_TAB_COLOR)
         self.rail_result = rail_result
         copper = (stackup or {}).get("copper", {})
         layer_order = list((stackup or {}).get("layer_order", []))
@@ -372,9 +393,10 @@ class RailResultsWidget(QTabWidget):
             plot.set_levels(lo, hi)
 
     def step_view(self, delta):
-        """Next/previous view (3D, then layers), wrapping around."""
-        if self.count():
-            self.setCurrentIndex((self.currentIndex() + delta) % self.count())
+        """Next/previous view (3D, then layers). Does nothing past the first/last view."""
+        target = self.currentIndex() + delta
+        if 0 <= target < self.count():
+            self.setCurrentIndex(target)
 
     def fit_current_view(self):
         page = self.currentWidget()

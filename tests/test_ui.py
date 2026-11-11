@@ -211,19 +211,22 @@ class TestShortcuts(unittest.TestCase):
         tabs = self.win.results_tabs
         self.assertEqual([tabs.tabText(i) for i in range(tabs.count())], ["1: +5V", "2: +3V3"])
 
-    def test_arrows_cycle_views_and_numbers_pick_rail(self):
+    def test_arrows_step_views_and_numbers_pick_rail(self):
+        self.assertEqual(self.rail_and_view(), (0, "3D View"))
+        self.press(Qt.Key.Key_Left)                    # already the first view: ignored
         self.assertEqual(self.rail_and_view(), (0, "3D View"))
         self.press(Qt.Key.Key_Right)
         self.assertEqual(self.rail_and_view(), (0, "F.Cu"))
         self.press(Qt.Key.Key_2)                       # same view kept on the new rail
         self.assertEqual(self.rail_and_view(), (1, "F.Cu"))
         self.press(Qt.Key.Key_Right)
-        self.press(Qt.Key.Key_Right)                   # wraps around
-        self.assertEqual(self.rail_and_view(), (1, "3D View"))
+        self.assertEqual(self.rail_and_view(), (1, "B.Cu"))
+        self.press(Qt.Key.Key_Right)                   # last view: ignored, no wrap-around
+        self.assertEqual(self.rail_and_view(), (1, "B.Cu"))
         self.press(Qt.Key.Key_Left)
-        self.assertEqual(self.rail_and_view(), (1, "B.Cu"))
+        self.assertEqual(self.rail_and_view(), (1, "F.Cu"))
         self.press(Qt.Key.Key_9)                       # no rail 9: nothing happens
-        self.assertEqual(self.rail_and_view(), (1, "B.Cu"))
+        self.assertEqual(self.rail_and_view(), (1, "F.Cu"))
 
     def test_fit_2d_shows_whole_board(self):
         self.press(Qt.Key.Key_Right)                   # F.Cu map

@@ -35,6 +35,10 @@ def main():
     # Ensure protocol prefix
     if socket_path and not socket_path.startswith('ipc://') and not socket_path.startswith('\\\\.\\pipe\\'):
          socket_path = f"ipc://{socket_path}"
+    # The simulation runs in a child process that reconnects to KiCad on its own:
+    # make sure it inherits the same socket (KICAD_API_TOKEN is inherited as-is).
+    if socket_path:
+        os.environ["KICAD_API_SOCKET"] = socket_path
 
     initial_logs = []
     def early_log(msg):

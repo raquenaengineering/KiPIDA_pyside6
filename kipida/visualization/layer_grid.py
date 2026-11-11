@@ -44,20 +44,30 @@ class LayerGrid:
 
 
 def mesh_to_layer_grids(mesh, results: Dict[int, float]) -> Dict[int, LayerGrid]:
-    """{layer_id: LayerGrid} for every layer with mesh nodes. All grids share one shape."""
-    if not mesh.node_map:
-        return {}
+    """{layer_id: LayerGrid} for every layer with mesh nodes. All grids share one shape.
 
-    keys = np.array(list(mesh.node_map.keys()), dtype=np.int64)        # (N, 3): xi, yi, layer
-    nids = np.fromiter(mesh.node_map.values(), dtype=np.int64, count=len(keys))
+    Accepts a full mesh (node_map dict + results dict), or the compact form sent
+    back by the simulation process (mesh.node_keys (N, 3) and mesh.node_volts (N,)).
+    """
+    compact = getattr(mesh, "node_keys", None)
+    if compact is not None:
+        if len(compact) == 0:
+            return {}
+        keys = np.asarray(compact, dtype=np.int64)
+        volts = np.asarray(mesh.node_volts, dtype=np.float32)
+    else:
+        if not mesh.node_map:
+            return {}
+        keys = np.array(list(mesh.node_map.keys()), dtype=np.int64)        # (N, 3): xi, yi, layer
+        nids = np.fromiter(mesh.node_map.values(), dtype=np.int64, count=len(keys))
 
-    by_nid = np.full(int(nids.max()) + 1, np.nan, dtype=np.float32)
-    if results:
-        r_ids = np.fromiter(results.keys(), dtype=np.int64, count=len(results))
-        r_vals = np.fromiter(results.values(), dtype=np.float64, count=len(results))
-        ok = r_ids <= nids.max()
-        by_nid[r_ids[ok]] = r_vals[ok]
-    volts = by_nid[nids]
+        by_nid = np.full(int(nids.max()) + 1, np.nan, dtype=np.float32)
+        if results:
+            r_ids = np.fromiter(results.keys(), dtype=np.int64, count=len(results))
+            r_vals = np.fromiter(results.values(), dtype=np.float64, count=len(results))
+            ok = r_ids <= nids.max()
+            by_nid[r_ids[ok]] = r_vals[ok]
+        volts = by_nid[nids]
 
     xi, yi, layers = keys[:, 0], keys[:, 1], keys[:, 2]
     shape = (int(xi.max()) + 1, int(yi.max()) + 1)
