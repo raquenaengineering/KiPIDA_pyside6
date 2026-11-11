@@ -5,8 +5,9 @@
 # interpreter) through 3.14. Keep in sync with pyproject.toml.
 numpy
 scipy
-shapely
-# Background only (mesh rasterisation via matplotlib.path); not used for display
+# >= 2.0: vectorised point-in-polygon (contains_xy) used by the mesher
+shapely>=2.0
+# Only used by an optional debug plot of the extracted geometry
 matplotlib
 kicad-python>=0.7.0
 pypardiso

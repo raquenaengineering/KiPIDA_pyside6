@@ -10,13 +10,25 @@ def to_mm(val):
 
 try:
     import numpy as np
+    import shapely
     from shapely.geometry import Point, box
-    from shapely.prepared import prep
-    import matplotlib.path
 except ImportError:
-    np = None
-    Point = box = prep = None
-    matplotlib = None
+    np = shapely = None
+    Point = box = None
+
+
+def copper_mask(geometry, xv, yv):
+    """Boolean grid (same shape as xv/yv): True where a grid point lies on copper.
+
+    One vectorised Shapely test for the whole layer. Holes (clearances, antipads,
+    thermal-relief gaps) are correctly excluded. The previous matplotlib
+    path test treated holes as copper and re-scanned the whole grid for every
+    separate copper piece (minutes on large nets). The tiny buffer keeps points
+    lying exactly on a copper edge.
+    """
+    region = geometry.buffer(1e-5)
+    shapely.prepare(region)
+    return shapely.contains_xy(region, xv, yv)
 
 class Mesh:
     def __init__(self):
@@ -60,8 +72,8 @@ class Mesher:
         self.board = board
         self.debug = debug
         self.log_callback = log_callback
-        if np is None or Point is None or matplotlib is None:
-            raise ImportError("NumPy, Shapely, and Matplotlib are required for Meshing.")
+        if np is None or shapely is None:
+            raise ImportError("NumPy and Shapely are required for Meshing.")
     
     def _get_val(self, obj, attr_name, default=None):
         """Robustly get attribute value from object (property or getter)."""
@@ -138,11 +150,7 @@ class Mesher:
         y_coords = np.linspace(min_y, min_y + (ny * grid_size_mm), ny + 1)
         
         xv, yv = np.meshgrid(x_coords, y_coords) # shape (ny+1, nx+1)
-        # Flatten for vectorized checks logic
-        # But we need structure for neighbor identifying.
-        
-        grid_points = np.column_stack((xv.ravel(), yv.ravel()))
-        
+
         if self.debug:
             self._log(f"Grid setup: {nx+1}x{ny+1} points, bounds ({min_x:.1f},{min_y:.1f}) to ({max_x:.1f},{max_y:.1f})")
 
@@ -162,49 +170,7 @@ class Mesher:
             poly = geometry_by_layer[lid]
             if poly.is_empty: continue
             
-            # Simple buffering to ensure boundary inclusion - though check 'contains' logic
-            # Using matplotlib path for speed
-            # Matplotlib Path uses vertices. 
-            # If poly is MultiPolygon, iterate parts.
-            
-            polys_to_check = [poly] if poly.geom_type == 'Polygon' else list(poly.geoms)
-            
-            # Create a combined boolean mask for this layer
-            layer_mask = np.zeros(len(grid_points), dtype=bool)
-            
-            for p in polys_to_check:
-                # Buffer slightly to include points on edges
-                pb = p.buffer(1e-5) 
-                
-                # Extract exterior coords
-                
-                codes = []
-                verts = []
-                
-                # Exterior
-                ext_coords = list(pb.exterior.coords)
-                verts.extend(ext_coords)
-                codes.append(matplotlib.path.Path.MOVETO)
-                codes.extend([matplotlib.path.Path.LINETO] * (len(ext_coords) - 2))
-                codes.append(matplotlib.path.Path.CLOSEPOLY)
-                
-                # Interiors (Holes)
-                for interior in pb.interiors:
-                    int_coords = list(interior.coords)
-                    verts.extend(int_coords)
-                    codes.append(matplotlib.path.Path.MOVETO)
-                    codes.extend([matplotlib.path.Path.LINETO] * (len(int_coords) - 2))
-                    codes.append(matplotlib.path.Path.CLOSEPOLY)
-                
-                path = matplotlib.path.Path(verts, codes)
-                
-                # Check points
-                # radius=0 means exact point check. Could use small radius for tolerance.
-                mask = path.contains_points(grid_points, radius=1e-9)
-                layer_mask |= mask
-            
-            # Reshape back to grid
-            mask_2d = layer_mask.reshape((ny + 1, nx + 1))
+            mask_2d = copper_mask(poly, xv, yv)
             
             # Assign Node IDs
             count_on_layer = np.count_nonzero(mask_2d)

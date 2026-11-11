@@ -52,6 +52,27 @@ class TestMesher(unittest.TestCase):
         self.assertEqual(len(mesh.nodes), 15)
         self.assertTrue(len(mesh.G_coo_data) > 0)
 
+    def test_holes_are_not_copper(self):
+        """Regression: clearance holes in a plane used to be meshed as solid copper."""
+        plane = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)],
+                        holes=[[(3, 3), (7, 3), (7, 7), (3, 7)]])  # 4 x 4 mm antipad
+        stackup = {'copper': {0: {'thickness_mm': 0.035}}, 'resistivity': 1.7e-5}
+        mesh = self.mesher.generate_mesh("Test", {0: plane}, stackup, grid_size_mm=0.5)
+        hole_nodes = [n for n, (x, y, _l) in mesh.node_coords.items() if 3 < x < 7 and 3 < y < 7]
+        self.assertEqual(hole_nodes, [])
+        # Node count follows the real copper area (100 - 16 mm^2 at 0.5 mm pitch -> ~336 + edge rows)
+        full = self.mesher.generate_mesh("Test", {0: Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])},
+                                         stackup, grid_size_mm=0.5)
+        self.assertEqual(len(full.nodes) - len(mesh.nodes), 7 * 7)  # the 7 x 7 grid points strictly inside the hole
+
+    def test_many_separate_pieces(self):
+        """Every piece of a multi-part layer is meshed, edges included."""
+        from shapely.geometry import MultiPolygon
+        pieces = MultiPolygon([Polygon([(x, 0), (x + 1, 0), (x + 1, 1), (x, 1)]) for x in range(0, 20, 2)])
+        stackup = {'copper': {0: {'thickness_mm': 0.035}}, 'resistivity': 1.7e-5}
+        mesh = self.mesher.generate_mesh("Test", {0: pieces}, stackup, grid_size_mm=0.5)
+        self.assertEqual(len(mesh.nodes), 10 * 3 * 3)  # 10 squares x 3 x 3 grid points (edges included)
+
     def test_vertical_link_via(self):
         # Same small square on F.Cu (0) and B.Cu (31), via at the origin
         square = Polygon([(-1, -1), (1, -1), (1, 1), (-1, 1)])
