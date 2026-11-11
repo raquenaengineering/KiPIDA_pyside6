@@ -247,6 +247,7 @@ class SystemSimulator:
 
         rail_by_name = {r.net_name: r for r in rails}
         rail_total_current = {r.net_name: 0.0 for r in rails}
+        fed_by_regulator = {reg.output_rail_name for r in rails for reg in r.child_regulators}
 
         for rail in sorted_rails:
             self.log(f"Processing Rail: {rail.net_name} (Sources: {len(rail.sources)}, Loads: {len(rail.loads)})")
@@ -254,6 +255,13 @@ class SystemSimulator:
             # Direct loads on this rail
             rail_total_current[rail.net_name] = sum(load.total_current for load in rail.loads)
             timings = {}
+
+            # Without a source (explicit, or a regulator feeding it) the rail cannot be
+            # solved: skip it before the expensive geometry extraction and meshing.
+            if not rail.sources and rail.net_name not in fed_by_regulator:
+                self.log(f"  Skipping {rail.net_name}: no voltage source "
+                         f"(add a source, or a regulator whose output feeds this rail).")
+                continue
 
             # A. Geometry & mesh
             t = time.perf_counter()

@@ -119,5 +119,42 @@ class TestSystemSimulator(unittest.TestCase):
         self.assertAlmostEqual(loads["10V"], 0.625)
 
 
+class TestSkipRailsWithoutSource(unittest.TestCase):
+    def test_no_geometry_or_mesh_for_unsolvable_rails(self):
+        """GND/VIN without any source used to be fully meshed and only then skipped."""
+        r10 = PowerRail("10V", 10.0)
+        r10.add_source(UnifiedSource(ComponentRef("J1"), ["1"]))
+        r10.add_child_regulator(_reg("10V", "5V"))
+        r5 = PowerRail("5V", 5.0)           # no explicit source, but fed by the regulator
+        gnd = PowerRail("GND", 0.0)         # no source at all
+
+        extracted = []
+
+        class CountingExtractor(_FakeExtractor):
+            def get_net_geometry(self, net_name):
+                extracted.append(net_name)
+                return super().get_net_geometry(net_name)
+
+        class Solver:
+            def __init__(self, *a, **k):
+                pass
+
+            def solve(self, mesh, sources, loads):
+                return {0: 10.0, 1: 9.9}
+
+        logs = []
+        sim = system.SystemSimulator(board=None, log_callback=logs.append)
+        with mock.patch.object(system, "GeometryExtractor", CountingExtractor), \
+             mock.patch.object(system, "Mesher", _FakeMesher), \
+             mock.patch.object(system, "Solver", Solver), \
+             mock.patch.object(sim, "get_mesh_nodes", return_value=[0]):
+            result = sim.run([r10, r5, gnd])
+
+        self.assertNotIn("GND", extracted)
+        self.assertEqual(sorted(extracted), ["10V", "5V"])
+        self.assertEqual(set(result.rails), {"10V", "5V"})
+        self.assertTrue(any("Skipping GND: no voltage source" in l for l in logs), logs)
+
+
 if __name__ == "__main__":
     unittest.main()
